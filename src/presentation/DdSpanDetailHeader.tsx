@@ -1,84 +1,86 @@
 // 详情顶部 span header（Story 3.4）——对齐 Datadog：服务 chip(通用色块图标)+operationName +
-// 右侧 耗时 + "100% total exec time" + exec 进度条 + 折叠。不复制 Datadog 商标/logo。
+// 耗时占比以完整 Trace 的可见时间范围为分母。
+import { Button, ClockIcon, PanelBottomShrinkIcon, PanelBottomGrowIcon, EntityPill, PercentBar, AttentionCircledIcon, KebabVerticalIcon, Flex, Text, PopoverRoot, PopoverTrigger, PopoverContent, CopyButton, type IconProps } from '@datafox/ui';
 import { css } from '@emotion/css';
-import type { ReactNode } from 'react';
+import type { ComponentType, ReactNode } from 'react';
+import { formatSpanDuration } from '../utils';
 
-import { useStyles2, type Theme } from '../theme';
-import { formatDuration } from '../utils';
-
-const getStyles = (theme: Theme) => ({
-  header: css({
-    label: 'DdSpanDetailHeader',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '6px 8px',
-    borderBottom: `1px solid ${theme.trace.detail.border}`,
-  }),
-  chip: css({
-    label: 'DdSpanHeaderChip',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '1px 8px 1px 4px',
-    border: `1px solid ${theme.trace.detail.border}`,
-    borderRadius: 4,
-    fontSize: 13,
-    color: theme.colors.text.primary,
-    flex: 'none',
-  }),
-  chipIcon: css({ label: 'DdSpanHeaderChipIcon', width: 12, height: 12, borderRadius: 3, flex: 'none' }),
-  op: css({ label: 'DdSpanHeaderOp', fontWeight: theme.typography.fontWeightMedium, fontSize: 14, color: theme.colors.text.primary, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }),
-  right: css({ label: 'DdSpanHeaderRight', marginLeft: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flex: 'none' }),
-  timing: css({ label: 'DdSpanHeaderTiming', display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12, color: theme.colors.text.primary }),
-  duration: css({ fontWeight: theme.typography.fontWeightMedium }),
-  execLabel: css({ color: theme.trace.detail.label }),
-  execBar: css({ label: 'DdSpanHeaderExecBar', width: 160, height: 3, borderRadius: 2, background: theme.trace.detail.link }),
-  close: css({
-    label: 'DdSpanHeaderClose',
-    cursor: 'pointer',
-    color: theme.trace.detail.label,
-    background: 'none',
-    border: 'none',
-    fontSize: 13,
-    padding: '0 4px',
-    '&:hover': { color: theme.colors.text.primary },
-  }),
+const header = css({
+  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  gap: 'var(--spacing-lg)', paddingLeft: 'var(--spacing-md)',
+  minHeight: 36, flexShrink: 0, boxSizing: 'border-box',
 });
+const identity = css({ minWidth: 0, flex: '1 1 auto' });
+const operationWrapper = css({
+  minWidth: 0, flex: '0 1 auto', borderRadius: 8,
+  '&:hover': { backgroundColor: 'var(--ui-interaction-secondary)' },
+});
+// Measured official operation handle: 18px text + 4px vertical padding, no border.
+const operation = css({
+  minWidth: 0, maxWidth: '100%', height: 26, border: 0, borderRadius: 8,
+  justifyContent: 'flex-start', padding: 'var(--spacing-xs) var(--spacing-sm)',
+  color: 'var(--ui-text)', lineHeight: '18px',
+});
+const timing = css({ width: 190, flexShrink: 0,
+  '@container (max-width: 600px)': { width: 'auto' },
+});
+const execution = css({ whiteSpace: 'nowrap', '@container (max-width: 600px)': { display: 'none' } });
 
 interface Props {
   serviceName: string;
   operationName: string;
+  resourceName?: string;
+  icon?: ComponentType<IconProps>;
   duration: number;
+  traceDuration?: number;
   /** 服务色（用作 chip 图标色块）。 */
   color: string;
   /** 右侧动作槽（分享/链接等 stub 按钮，Story 5.4）。 */
   actions?: ReactNode;
   onClose: () => void;
+  isCollapsed?: boolean;
+  onToggleCollapsed?: () => void;
+  isError?: boolean;
 }
 
-export function DdSpanDetailHeader({ serviceName, operationName, duration, color, actions, onClose }: Props) {
-  const styles = useStyles2(getStyles);
+export function DdSpanDetailHeader({ serviceName, operationName, resourceName, icon: Icon, duration, traceDuration, color, actions, onClose, isCollapsed, onToggleCollapsed, isError }: Props) {
+  const percentage = traceDuration && traceDuration > 0 ? duration / traceDuration * 100 : undefined;
   return (
-    <div className={styles.header} data-testid="DdSpanDetailHeader">
-      <span className={styles.chip}>
-        <span className={styles.chipIcon} style={{ background: color }} />
-        {serviceName}
-      </span>
-      <span className={styles.op} title={operationName}>
-        {operationName}
-      </span>
-      <span className={styles.right}>
-        <span className={styles.timing}>
-          <span className={styles.duration}>{formatDuration(duration)}</span>
-          <span className={styles.execLabel}>100% total exec time</span>
-        </span>
-        <span className={styles.execBar} />
-      </span>
-      {actions}
-      <button className={styles.close} onClick={onClose} title="关闭详情">
-        ✕
-      </button>
+    <div className={header} data-testid="DdSpanDetailHeader">
+      <Flex alignItems="center" gap="xs" className={identity}>
+        <EntityPill label={serviceName} beforeContent={Icon && <Icon size="md" />} chipColor={color} size="md" isReadOnly maxWidth={220} style={{ flexShrink: 1, minWidth: 0, maxWidth: 'min(220px, 30cqw)' }} />
+        <PopoverRoot>
+          <Flex className={operationWrapper}>
+          <PopoverTrigger asChild>
+            <Button isDangerouslyNaked className={operation} aria-label="Span 操作">
+              <Flex alignItems="center" gap="xs" style={{ minWidth: 0 }}>
+                <Text size="md" style={{ lineHeight: '18px' }} weight="normal" isItalic hasEllipsis title={operationName}>{operationName}</Text>
+                {isError && <AttentionCircledIcon size="md" title="Span error" style={{ color: 'var(--ui-status-danger)', flexShrink: 0 }} />}
+                {resourceName && resourceName !== operationName && <Text size="md" style={{ lineHeight: '18px' }} weight="bold" hasEllipsis title={resourceName}>{resourceName}</Text>}
+                <KebabVerticalIcon size="sm" style={{ flexShrink: 0 }} />
+              </Flex>
+            </Button>
+          </PopoverTrigger>
+          </Flex>
+          <PopoverContent placement="bottom-start" isPadded aria-label="Span 操作">
+            <Flex direction="column" alignItems="stretch" gap="xs">
+              <CopyButton value={operationName} label="复制操作名称" messageCopy="复制操作名称" messageCopied="已复制" />
+              {resourceName && <CopyButton value={resourceName} label="复制资源名称" messageCopy="复制资源名称" messageCopied="已复制" />}
+            </Flex>
+          </PopoverContent>
+        </PopoverRoot>
+      </Flex>
+      <Flex alignItems="center" gap="md" style={{ flexShrink: 0 }}>
+        <Flex direction="column" alignItems="stretch" gap="xxs" className={timing}>
+          <Flex alignItems="center" justify="space-between">
+            <Flex alignItems="center" gap="xs"><ClockIcon size="md" /><Text size="xs" weight="bold">{formatSpanDuration(duration)}</Text></Flex>
+            {percentage !== undefined && <Text size="xs" className={execution}>{Number(percentage.toFixed(2))}% total exec time</Text>}
+          </Flex>
+          {percentage !== undefined && <PercentBar ratio={percentage / 100} width="100%" height={4} hasTitleText={false} />}
+        </Flex>
+        {actions}
+        <Button size="md" isBorderless style={{ marginRight: 'var(--spacing-sm)' }} icon={isCollapsed ? PanelBottomGrowIcon : PanelBottomShrinkIcon} onClick={onToggleCollapsed ?? onClose} aria-label={onToggleCollapsed ? (isCollapsed ? "展开 Span 详情" : "收起 Span 详情") : "关闭详情"} title={isCollapsed ? "展开 Span 详情" : "收起 Span 详情"} aria-expanded={onToggleCollapsed ? !isCollapsed : undefined} />
+      </Flex>
     </div>
   );
 }

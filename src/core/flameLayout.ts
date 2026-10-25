@@ -73,9 +73,33 @@ function compute(trace: Trace, viewRange: FlameViewRange, focusRootSpanId: strin
   const degenerate = max - min <= 0;
   const fn = createViewedBoundsFunc({ min, max, viewStart: viewRange.viewStart, viewEnd: viewRange.viewEnd });
   const safe = (v: number) => (Number.isFinite(v) ? v : 0);
+  // Tree depth is a minimum lane, not a collision policy. Concurrent siblings and
+  // missing-parent roots must remain individually visible. Preorder preserves the
+  // parent lane; interval insertion also handles roots starting earlier in time.
+  const lanes: Array<Array<[number, number]>> = [];
+  const ancestors: number[] = [];
   let maxDepth = 0;
   const rows: FlameLayoutRow[] = spans.map((span) => {
-    const depth = span.depth - baseDepth;
+    const treeDepth = span.depth - baseDepth;
+    const startTime = span.startTime;
+    const endTime = startTime + span.duration;
+    let depth = treeDepth === 0 ? 0 : ancestors[treeDepth - 1] + 1;
+    for (;; depth++) {
+      const intervals = lanes[depth] ?? (lanes[depth] = []);
+      let lo = 0;
+      let hi = intervals.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (intervals[mid][0] < startTime) lo = mid + 1;
+        else hi = mid;
+      }
+      if ((lo > 0 && intervals[lo - 1][1] > startTime) ||
+          (lo < intervals.length && intervals[lo][0] < endTime)) continue;
+      intervals.splice(lo, 0, [startTime, endTime]);
+      break;
+    }
+    ancestors[treeDepth] = depth;
+    ancestors.length = treeDepth + 1;
     if (depth > maxDepth) {
       maxDepth = depth;
     }
@@ -90,7 +114,7 @@ function compute(trace: Trace, viewRange: FlameViewRange, focusRootSpanId: strin
 
 /**
  * 计算 trace 火焰图布局：每个 span → { spanID, depth, left, width }。
- * 严格 depth（row = span.depth），同深度多 span 各按 startTime 摆。
+ * Preserve parent-before-child lanes and allocate extra lanes for overlapping intervals.
  * focusRootSpanId（6.7）：re-root → 只取子树 + depth 重基 + 时间映射到 root 区间（root 铺满）。
  * memoize：相同 (trace, viewRange, focusRootSpanId) 返回同一结果。
  */

@@ -10,6 +10,8 @@ import { DdFlameMinimap } from './DdFlameMinimap';
 const theme = createTheme({ colorMode: 'light' });
 
 function mount(props: Parameters<typeof DdFlameMinimap>[0]) {
+  // Story 10.6（code-review 修）：**不**外套 TooltipProvider——DdFlameMinimap/DdFlameControls 已自带 Provider
+  // （公开导出可独立挂载），此处正好验证自带生效（缺 Provider 会 Radix 抛错）。
   return render(createElement(ThemeProvider, { theme, children: <DdFlameMinimap {...props} /> }));
 }
 
@@ -43,6 +45,23 @@ describe('DdFlameMinimap', () => {
     expect(onViewRangeChange).toHaveBeenCalled();
     const [vs, ve] = onViewRangeChange.mock.calls[0];
     expect(ve - vs).toBeCloseTo(0.25, 5); // 宽度保持
+  });
+
+  // Story 10.6：真页 viewport `cursor:grab`/`pointer-events:auto` → 抓住视口内相对拖拽平移（非点哪居中）。
+  it('抓视口内拖拽 → 相对平移（宽度不变、按位移量平移）', () => {
+    const onViewRangeChange = vi.fn();
+    const { getByTestId } = mount({ ...base, viewStart: 0.25, viewEnd: 0.5, onViewRangeChange });
+    const canvas = getByTestId('DdFlameMinimap').querySelector('[class$="MinimapCanvas"]') as HTMLElement;
+    // 视口 = [25px, 50px]（100px 宽）。抓视口内 35px（frac 0.35 ∈ [0.25,0.5]），拖到 55px（+0.2）。
+    canvas.getBoundingClientRect = () =>
+      ({ left: 0, width: 100, top: 0, right: 100, bottom: 60, height: 60, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 35 });
+    expect(onViewRangeChange).not.toHaveBeenCalled(); // 抓取时不立即跳转
+    fireEvent.mouseMove(canvas, { clientX: 55 });
+    const calls = onViewRangeChange.mock.calls;
+    const [vs, ve] = calls[calls.length - 1];
+    expect(ve - vs).toBeCloseTo(0.25, 5); // 宽度不变
+    expect(vs).toBeCloseTo(0.45, 5); // 0.25 + 0.2 位移
   });
 
   it('toggle 收起/展开', () => {

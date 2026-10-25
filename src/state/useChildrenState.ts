@@ -32,6 +32,15 @@ export function useChildrenState() {
     });
   }, []);
 
+  const expandAncestors = useCallback((ancestorIds: string[]) => {
+    setChildrenHiddenIDs((previous) => {
+      if (!ancestorIds.some((id) => previous.has(id))) return previous;
+      const next = new Set(previous);
+      ancestorIds.forEach((id) => next.delete(id));
+      return next;
+    });
+  }, []);
+
   // 全展开：清空。
   const expandAll = useCallback(() => {
     setChildrenHiddenIDs((prev) => (prev.size === 0 ? prev : new Set()));
@@ -103,6 +112,7 @@ export function useChildrenState() {
 
   return {
     childrenHiddenIDs,
+    expandAncestors,
     expandOne,
     collapseOne,
     expandAll,

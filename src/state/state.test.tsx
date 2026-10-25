@@ -42,7 +42,7 @@ describe('useTraceTimelineState — 非受控', () => {
     expect(result.current.viewRange.time.current).toEqual([0.2, 0.8]);
   });
 
-  it('selectSpan 单选 toggle → 底部抽屉选中态（Story 5.5）', () => {
+  it('selectSpan 幂等单选，显式关闭才清除选择', () => {
     const { result } = renderHook(() => useTraceTimelineState(mockTrace));
     expect(result.current.selectedSpanId).toBeUndefined();
 
@@ -55,8 +55,10 @@ describe('useTraceTimelineState — 非受控', () => {
     act(() => result.current.selectSpan('s4'));
     expect(result.current.selectedSpanId).toBe('s4');
 
-    // 再点 s4 → 取消选中（关闭抽屉）
+    // 再点 s4 保持选中；关闭操作独立。
     act(() => result.current.selectSpan('s4'));
+    expect(result.current.selectedSpanId).toBe('s4');
+    act(() => result.current.clearSelection());
     expect(result.current.selectedSpanId).toBeUndefined();
 
     // detailToggle 等价于 selectSpan（行点击入口）
@@ -169,5 +171,115 @@ describe('useTraceTimelineState — 受控（AD-5 三态）', () => {
     expect(onStateChange).toHaveBeenCalledTimes(1);
     const next = onStateChange.mock.calls[0][0] as ControlledTraceState;
     expect(next.childrenHiddenIDs.has('s1')).toBe(true);
+  });
+});
+
+describe('controlled detail selection', () => {
+  it('initializes details, emits changes without changing the controlled value, and clears with null', () => {
+    const onSelectedSpanIdChange = vi.fn();
+    const { result, rerender } = renderHook(({ id }: { id: string | null }) => useTraceTimelineState(mockTrace, {
+      selectedSpanId: id, onSelectedSpanIdChange,
+    }), { initialProps: { id: 's1' as string | null } });
+    expect(result.current.selectedSpanId).toBe('s1');
+    expect(result.current.detailStates.has('s1')).toBe(true);
+    act(() => result.current.selectSpan('s4'));
+    expect(onSelectedSpanIdChange).toHaveBeenCalledWith('s4');
+    expect(result.current.selectedSpanId).toBe('s1');
+    rerender({ id: 's4' });
+    expect(result.current.detailStates.has('s4')).toBe(true);
+    act(() => result.current.selectSpan('s4'));
+    expect(onSelectedSpanIdChange).toHaveBeenCalledTimes(1);
+    act(() => result.current.clearSelection());
+    expect(onSelectedSpanIdChange).toHaveBeenLastCalledWith(null);
+    rerender({ id: null });
+    expect(result.current.selectedSpanId).toBeUndefined();
+  });
+});
+
+describe('selection and search reveal', () => {
+  it('expands only selected ancestry and permits later manual collapse', () => {
+    const { result, rerender } = renderHook(({ selectedSpanId }) => useTraceTimelineState(mockTrace, { selectedSpanId }), { initialProps: { selectedSpanId: null as string | null } });
+    act(() => result.current.collapseAll(mockTrace.spans));
+    rerender({ selectedSpanId: 's9' });
+    for (const id of ['s1', 's7', 's8']) expect(result.current.childrenHiddenIDs.has(id)).toBe(false);
+    expect(result.current.childrenHiddenIDs.has('s4')).toBe(true);
+    act(() => result.current.childrenToggle('s7'));
+    expect(result.current.childrenHiddenIDs.has('s7')).toBe(true);
+    rerender({ selectedSpanId: 's9' });
+    expect(result.current.childrenHiddenIDs.has('s7')).toBe(true);
+    rerender({ selectedSpanId: 'missing' });
+    expect(result.current.childrenHiddenIDs.has('s7')).toBe(true);
+  });
+  it('reveals search matches and selects their detail', () => {
+    const { result } = renderHook(() => useTraceTimelineState(mockTrace));
+    act(() => result.current.collapseAll(mockTrace.spans));
+    act(() => result.current.search.setQuery('s9'));
+    expect(result.current.search.focusedMatchId).toBe('s9');
+    for (const id of ['s1', 's7', 's8']) expect(result.current.childrenHiddenIDs.has(id)).toBe(false);
+    expect(result.current.selectedSpanId).toBe('s9');
+  });
+  it('requests immutable full-controlled ancestry updates once', () => {
+    const hidden = new Set(['s1', 's4', 's7', 's8']);
+    const state: ControlledTraceState = { childrenHiddenIDs: hidden, viewRange: { time: { current: [0, 1] } }, spanNameColumnWidth: 0.3, hoverIndentGuideIds: new Set() };
+    const onStateChange = vi.fn();
+    const { rerender } = renderHook(() => useTraceTimelineState(mockTrace, { state, selectedSpanId: 's9', onStateChange }));
+    expect(onStateChange).toHaveBeenCalledOnce();
+    expect(onStateChange.mock.calls[0][0].childrenHiddenIDs).toEqual(new Set(['s4']));
+    expect(hidden.size).toBe(4);
+    rerender(); expect(onStateChange).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('search selection integration', () => {
+  it('non-match selection reports 0/N without stale focus, with navigation from both ends', () => {
+    const { result } = renderHook(() => useTraceTimelineState(mockTrace));
+    act(() => result.current.search.setQuery('span_id:(s1 OR s4)'));
+    expect(result.current.search.focusedMatchIndex).toBe(1);
+    act(() => result.current.selectSpan('s9'));
+    expect(result.current.search.matchCount).toBe(2);
+    expect(result.current.search.focusedMatchIndex).toBe(0);
+    expect(result.current.search.focusedMatchId).toBeUndefined();
+    act(() => result.current.search.nextMatch());
+    expect(result.current.selectedSpanId).toBe('s1');
+    act(() => result.current.selectSpan('s9'));
+    act(() => result.current.search.prevMatch());
+    expect(result.current.selectedSpanId).toBe('s4');
+    act(() => result.current.clearSelection());
+    expect(result.current.search.focusedMatchIndex).toBe(0);
+    expect(result.current.search.focusedMatchId).toBeUndefined();
+  });
+  it('keeps an existing matching selection and navigates the detail without toggling it closed', () => {
+    const { result } = renderHook(() => useTraceTimelineState(mockTrace));
+    act(() => result.current.selectSpan('s9'));
+    act(() => result.current.search.setQuery('service:*'));
+    expect(result.current.selectedSpanId).toBe('s9');
+    expect(result.current.search.focusedMatchId).toBe('s9');
+    act(() => result.current.search.nextMatch());
+    expect(result.current.selectedSpanId).toBe(result.current.search.focusedMatchId);
+    expect(result.current.selectedSpanId).not.toBe('s9');
+    act(() => result.current.search.setQuery('span_id:s9'));
+    act(() => result.current.search.nextMatch());
+    expect(result.current.selectedSpanId).toBe('s9');
+  });
+  it('requests controlled selection on navigation and leaves it to the host', () => {
+    const onSelectedSpanIdChange = vi.fn();
+    const { result } = renderHook(() => useTraceTimelineState(mockTrace, { selectedSpanId: null, onSelectedSpanIdChange }));
+    act(() => result.current.search.setQuery('span_id:s9'));
+    expect(onSelectedSpanIdChange).toHaveBeenLastCalledWith('s9');
+    expect(result.current.selectedSpanId).toBeUndefined();
+  });
+  it('does not change detail on no matches or clear, and resets filters for another trace', () => {
+    const { result, rerender } = renderHook(({ trace }) => useTraceTimelineState(trace), { initialProps: { trace: mockTrace } });
+    act(() => result.current.selectSpan('s9'));
+    act(() => result.current.search.setQuery('service:no-such-service'));
+    expect(result.current.selectedSpanId).toBe('s9');
+    act(() => result.current.search.setQuery(''));
+    expect(result.current.search.matches).toBeUndefined();
+    expect(result.current.selectedSpanId).toBe('s9');
+    act(() => result.current.search.setErrorsOnly(true));
+    rerender({ trace: { ...mockTrace, traceID: 'another-trace' } });
+    expect(result.current.search.errorsOnly).toBe(false);
+    expect(result.current.search.matches).toBeUndefined();
   });
 });

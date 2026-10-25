@@ -5,11 +5,13 @@ import { css, cx } from '@emotion/css';
 import { PureComponent, type ReactNode } from 'react';
 
 import type { TNil, TUpdateViewRangeTimeFunction, ViewRangeTime, ViewRangeTimeUpdate } from '../core';
-import { useStyles2, type Theme } from '../theme';
+import { useStyles2 } from '../theme';
 import { DraggableManager, type DraggableBounds, type DraggingUpdate } from '../utils';
 
-const getStyles = (theme: Theme) => {
-  const reframe = theme.colors.primary.main;
+import { ui } from './uiTokens';
+
+const getStyles = () => {
+  const reframe = ui.interactionPrimary;
   return {
     layer: css({
       label: 'DdViewingLayer',
@@ -36,6 +38,7 @@ const getStyles = (theme: Theme) => {
     draggingRight: css({ label: 'DdViewingLayerDraggingRight', borderRight: `1px solid ${reframe}` }),
     reframeDrag: css({
       label: 'DdViewingLayerReframeDrag',
+      // Story 9.1 文档化例外：datafox 无 `--ui-interaction-*-soft`，且此处需半透明让底层刻度透出；保留原 reframe 蓝。
       background: 'rgba(110, 159, 255, 0.18)',
     }),
   };

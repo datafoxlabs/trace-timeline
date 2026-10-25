@@ -14,7 +14,7 @@
 //
 // 移植自 grafana TraceView/components/model/transform-trace-data.tsx。
 // 变更：@grafana/data 类型→本地；去 get-config（default-config 无 topTagPrefixes，orderTags 传 []）。
-import _isEqual from 'lodash/isEqual';
+import _isEqual from 'lodash/isEqual.js';
 
 import { getTraceName } from './get-trace-name';
 import { getServiceDisplayName } from './service-name';
@@ -66,6 +66,39 @@ export function orderTags(tags: TraceKeyValuePair[], topPrefixes?: string[]) {
   });
 
   return orderedTags;
+}
+
+/**
+ * 每个树节点的**子孙总数**（= subtree size − 1）。
+ *
+ * 真页 Datadog waterfall 行首那个灰色数字用的是这个量，**不是**直接子节点数
+ * （实测 `6a505e15…` 21 span：根显示 `20`；`TraceScenarioController.complex` 直接子节点 8 个、显示 `16`）。
+ *
+ * 单次 DFS 收集顺序 + 逆序累加，O(n)。**勿改成对每个节点调 `TreeNode.size`** —— 那个 getter 自身要 walk 整棵子树，
+ * 逐节点调用会退化成 O(n²)。以节点对象（而非 `value`）为键：`transformTraceData` 会给重复 spanID 改名，
+ * 但树是按改名后的 id 建的，用对象做键可彻底规避同名碰撞。
+ */
+function computeDescendantCounts(tree: TreeNode<string>): Map<TreeNode<string>, number> {
+  const order: Array<TreeNode<string>> = [];
+  const stack: Array<TreeNode<string>> = [tree];
+  while (stack.length) {
+    const node = stack.pop()!;
+    order.push(node);
+    for (const child of node.children) {
+      stack.push(child);
+    }
+  }
+  // `order` 是先序（父恒在子之前）⇒ 逆序遍历即后序，子节点的计数必已就绪。
+  const counts = new Map<TreeNode<string>, number>();
+  for (let i = order.length - 1; i >= 0; i--) {
+    const node = order[i];
+    let total = 0;
+    for (const child of node.children) {
+      total += 1 + counts.get(child)!;
+    }
+    counts.set(node, total);
+  }
+  return counts;
 }
 
 /**
@@ -125,6 +158,7 @@ export default function transformTraceData(data: TraceResponse | undefined): Tra
 
   // 用树排序，让子 span 跟在父后、兄弟按 startTime 排
   const tree = getTraceSpanIdsAsTree(data, spanMap);
+  const descendantCounts = computeDescendantCounts(tree);
   const spans: TraceSpan[] = [];
   const svcCounts: Record<string, number> = {};
 
@@ -145,6 +179,8 @@ export default function transformTraceData(data: TraceResponse | undefined): Tra
     span.depth = depth - 1;
     span.hasChildren = node.children.length > 0;
     span.childSpanCount = node.children.length;
+    // 真页行首徽标显示的是**子孙总数**，不是直接子节点数。两者在小树上常常相等，别当成同一个量。
+    span.descendantSpanCount = descendantCounts.get(node) ?? 0;
     span.warnings = span.warnings || [];
     span.tags = span.tags || [];
     span.references = span.references || [];

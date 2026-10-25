@@ -52,25 +52,34 @@ function statusTokens(mode: ThemeColorMode): TraceThemeTokens['status'] {
 
 export function traceTokens(mode: ThemeColorMode): TraceThemeTokens {
   return {
-    barHeight: 19,
-    barRadius: '2px 2px 0 0',
+    // Story 9.3（D2 / 纠正二）：真页实测瀑布条 `height:15px` + `border-radius:2px`（四角全圆）。
+    // 原值 19 / '2px 2px 0 0' 有误——「仅顶圆角」实为另一元素 `span-separator`（时间轴原点处 3px 宽的
+    // 服务色竖向连接条，用 --top-gap/--bottom-gap 与上下行相连），被 visual-spec 误当成了 bar。
+    barHeight: 15,
+    barRadius: '2px',
     barGap: 4,
     categoricalPalette: DATADOG_CATEGORICAL_PALETTE,
     status: statusTokens(mode),
-    indentLine: { width: 2, colorFrom: 'service' },
+    // Story 9.3d：树线改为真页的 1px `--ui-border` 灰导线，`colorFrom: 'service'` 已无消费者。
+    // 保留字段以免破坏 `Theme` 公开类型；宽度校正为实测 1px。
+    indentLine: { width: 1, colorFrom: 'service' },
     selectedRowBg: mode === 'light' ? 'rgb(234,246,252)' : 'rgb(31,46,61)',
     fontFamily: FONT_FAMILY,
     detail: detailTokens(mode),
     flame: {
-      rowHeight: 24,
+      // Story 10.7：真页火焰 canvas 直接采像素——干净列 bar 高 24 / 行距 25 / gap 1（原 24 使 bar 高塌成 23）。
+      rowHeight: 25,
       rowGap: 1,
       minLabelWidth: 24,
       labelPadding: 6,
       selectedOutline: mode === 'light' ? 'rgb(0,0,0)' : 'rgb(255,255,255)',
-      minimapWidth: 240,
+      minimapWidth: 210,
       minimapMask: mode === 'light' ? 'rgba(234,246,252,0.5)' : 'rgba(31,46,61,0.5)',
       minimapViewportBorder: mode === 'light' ? 'rgb(0,107,194)' : 'rgb(110,159,255)',
-      dimmedFill: mode === 'light' ? '#C2C8DD' : 'rgba(255,255,255,0.16)',
+      // Story 10.1：桥到 datafox dataviz token。light 用 var（`:root` 默认即 `#c2c8dd`，与原 `#C2C8DD` 逐位相同）。
+      // 10.6 复审：dark 改用**具体值** `#2c2b2b`（= datafox 暗态 dim 色）——`.dark` 仅挂在 TraceTimeline 根，
+      // 独立挂载 `DdFlameGraphView`（demo 直挂）时 CSS var 无 `.dark` 祖先会回落浅色，故 dark 取具体值以健壮。
+      dimmedFill: mode === 'dark' ? '#2c2b2b' : 'var(--ui-dataviz-graph-disabled-series)',
     },
   };
 }

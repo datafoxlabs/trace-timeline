@@ -51,7 +51,8 @@ function baseRow(over: Partial<RenderableRow>): RenderableRow {
 
 function mount(row: RenderableRow) {
   return render(
-    createElement(ThemeProvider, { theme, children: <DdLabelCell row={row} colorForSpanId={() => '#888'} /> })
+    // Story 9.3d：`colorForSpanId` 已从 DdLabelCell 摘除（树线不再用服务色）。
+    createElement(ThemeProvider, { theme, children: <DdLabelCell row={row} /> })
   );
 }
 

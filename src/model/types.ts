@@ -47,6 +47,9 @@ export type TraceSpanData = {
   duration: number;
   logs: TraceLog[];
   tags?: TraceKeyValuePair[];
+  /** Original attributes, before presentation metadata is appended to tags. */
+  rawSpanAttributes?: TraceKeyValuePair[];
+  rawResourceAttributes?: TraceKeyValuePair[];
   kind?: string;
   statusCode?: number;
   statusMessage?: string;
@@ -65,7 +68,20 @@ export type TraceSpanData = {
 export type TraceSpan = TraceSpanData & {
   depth: number;
   hasChildren: boolean;
+  /**
+   * **直接子节点数**（`node.children.length`）。Jaeger / Grafana 上游同名字段的同一语义，
+   * 与 `hasChildren` 天然成对。**不要**把它改成子孙总数——见 `descendantSpanCount`。
+   */
   childSpanCount: number;
+  /**
+   * **子孙总数**（= subtree size − 1）。真页 Datadog waterfall 行首那个灰色数字用的是这个。
+   *
+   * 与 `childSpanCount` 在小树上常常相等，别被骗了。真页实测（`6a505e15…`，21 span）：
+   * 根行显示 `20`（= 21 − 1）；`TraceScenarioController.complex` 显示 `16`，
+   * 而它的直接子节点只有 8 个。第二例（`6a4eff6d…`，6 span）：`HelloController.create`
+   * 直接子节点 2 个（`redis SET` / `GET /order`），显示 `4`。
+   */
+  descendantSpanCount: number;
   process: TraceProcess;
   relativeStartTime: number;
   tags: NonNullable<TraceSpanData['tags']>;

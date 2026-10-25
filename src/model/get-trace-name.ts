@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 // 移植自 grafana TraceView/components/model/trace-viewer.ts —— 仅取 getTraceName。
-import memoize from 'lodash/memoize';
+import memoize from 'lodash/memoize.js';
 
 import { getServiceDisplayName } from './service-name';
 import type { TraceSpan } from './types';

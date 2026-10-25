@@ -11,3 +11,10 @@ Those portions are licensed under the Apache License, Version 2.0; the original
 copyright and license headers are retained at the top of each ported source
 file, and significant modifications are noted inline. A copy of the Apache
 License, Version 2.0 is included in the LICENSE file.
+
+The development dependency in vendor/ is built from the public @datafox/ui
+project, licensed under Apache-2.0. Its archive includes its license and the
+SIL OFL 1.1 license for Roboto Mono. See vendor/README.md for source provenance.
+
+The Noto Sans font embedded in this library is licensed under SIL OFL 1.1.
+Copyright 2015-2021 Google LLC. See licenses/NotoSans-OFL.txt.

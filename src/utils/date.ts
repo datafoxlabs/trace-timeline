@@ -14,9 +14,10 @@
 //
 // 移植自 grafana TraceView/components/utils/date.tsx。变更：moment → dayjs；
 // formatMillisecond/SecondTime 的 moment.duration(x).asXxx() 即恒等，改普通算术。
+import { formatNumber } from '@datafox/ui';
 import dayjs from 'dayjs';
-import _dropWhile from 'lodash/dropWhile';
-import _round from 'lodash/round';
+import _dropWhile from 'lodash/dropWhile.js';
+import _round from 'lodash/round.js';
 
 import { toFloatPrecision } from './number';
 
@@ -94,4 +95,22 @@ export function formatDuration(duration: number): string {
   }
   const secondaryUnitString = `${secondaryValue}${secondaryUnit.unit}`;
   return `${primaryUnitString} ${secondaryUnitString}`;
+}
+
+/**
+ * 行内 span 时长（DRUIDS 3 位有效数字：`54.1ms` / `28.9ms` / `8.26ms`）。
+ *
+ * 直接消费 datafox `formatNumber(type:'duration')`（DRUIDS measures 反编译真值），本仓**不复刻**格式逻辑。
+ * datafox 期望**纳秒**、本仓模型是**微秒** → ×1000。
+ * 非有限值（NaN/Infinity，或 ×1000 溢出）→ 返回空串（不吐 `NaNd NaNh` 之类垃圾；`formatDuration` 对非有限同样吐垃圾，不能兜底）。
+ *
+ * ⚠ 刻度轴标签**不**走这里，仍用本地 `formatDuration`：datafox 会把整刻度补零成 `5.00ms`，
+ * 而真页轴是干净的 `5 ms`（见 `DdTicks` 的 `formatAxisTick` 注释）——真页本就是「轴 vs 行内」两套格式，
+ * 本仓两个 formatter 各对一套。此为「datafox 不适用 → 保留自实现」的刻意分流。
+ */
+export function formatSpanDuration(microseconds: number): string {
+  if (!Number.isFinite(microseconds)) {
+    return '';
+  }
+  return formatNumber(microseconds * 1000, { type: 'duration' }) ?? '';
 }

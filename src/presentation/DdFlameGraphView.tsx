@@ -1,23 +1,29 @@
+import { PopoverRoot, PopoverAnchor, PopoverContent } from '@datafox/ui';
 // Trace 火焰图视图（Epic 6）——按调用深度堆叠 + 横轴线性时间，对齐 Datadog Flame Graph。
 // 渲染方式：绝对定位 div 矩形（非 canvas），复用既有 emotion 皮肤/配色/选中样式，且可被 RTL 测试。
 // 布局几何来自 core computeFlameLayout（零皮肤）；颜色在本层算（AD-6）；行高走 theme.trace.flame（AD-7）。
 // 6.1 静态渲染 · 6.2 点击联动（onSelectSpan）· 6.3 gridline + hover 竖线游标 + tooltip。
+// Story 9.4b：自研 FlameCursor（半透明细线 + 贴边小标签）→ 与瀑布图共用 `DdTimeCursor`（datafox Tooltip 药丸）。
 import { css, cx } from '@emotion/css';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
 
-import { computeFlameLayout, type FlameViewRange } from '../core';
-import { getServiceDisplayName, type Trace, type TraceSpan } from '../model';
+import { computeFlameLayout, isErrorSpan, isInferredEntity, type FlameViewRange } from '../core';
+import { type Trace, type TraceSpan } from '../model';
 import { useStyles2, type Theme } from '../theme';
-import { formatDuration } from '../utils';
+import { formatSpanDuration } from '../utils';
 
-import { defaultColorAccessor, type ColorAccessor } from './colorAccessor';
-import { DdTicks } from './DdTicks';
+import { defaultColorAccessor, readableTextColor, type ColorAccessor } from './colorAccessor';
+import { DdSpanHoverCard } from './DdSpanHoverCard';
+import { spanPresentation } from './spanPresentation';
+import { flameRegularFont, flameNameFont } from './flameTypography';
+import { DdTimeCursor, flameGeometry } from './DdTimeCursor';
 
 const getStyles = (theme: Theme) => ({
   root: css({
     label: 'DdFlameGraphView',
     position: 'relative',
     width: '100%',
+    minHeight: '100%',
     fontFamily: theme.trace.fontFamily,
     overflow: 'hidden',
     boxSizing: 'border-box',
@@ -31,9 +37,10 @@ const getStyles = (theme: Theme) => ({
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: `0 ${theme.trace.flame.labelPadding}px`,
+    // Story 10.7：真页 canvas 实测——帧内 op 名 `bold 12px`，时长 `9px` 常规；帧文色随条底明暗二选一
+    // （见下 readableTextColor）。原来一律 12px/白字（≈瀑布字体）被用户指出「和瀑布一致、非 1:1」。
     fontSize: 12,
-    color: '#fff',
-    borderRadius: 2,
+    borderRadius: 0,
     overflow: 'hidden',
     whiteSpace: 'nowrap',
     boxSizing: 'border-box',
@@ -53,47 +60,35 @@ const getStyles = (theme: Theme) => ({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
+    fontFamily: flameNameFont,
+    fontWeight: 700,
   }),
-  dur: css({ label: 'DdFlameDur', flex: 'none', marginLeft: 8, opacity: 0.9 }),
-  cursor: css({
-    label: 'DdFlameCursor',
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 1,
-    background: theme.colors.text.secondary,
-    pointerEvents: 'none',
-    zIndex: 3,
-  }),
-  cursorLabel: css({
-    label: 'DdFlameCursorLabel',
-    position: 'absolute',
-    top: 0,
-    transform: 'translateX(-50%)',
-    padding: '0 4px',
-    fontSize: 11,
-    lineHeight: '16px',
+  // 真页时长 `9px NotoSans` 常规字重，与 op 同色（色 alpha 已含 .9，故不再叠 opacity）。
+  dur: css({ label: 'DdFlameDur', flex: 'none', marginLeft: 8, fontSize: 9, fontFamily: flameRegularFont, fontWeight: 400 }),
+  // Story 10.7：error span 帧左缘 `!` 徽标（真页 canvas 直接采像素）——19px 宽、满条高、白色 `!` 居中、
+  // 底色错误红 `status.error.fg`(#EB364B)。`marginLeft:-labelPadding` escape 帧内左 padding 贴到条左缘、
+  // `marginRight:labelPadding` 让 op 文本落在 badge 右侧（真页 op x≈25 = 徽标 19 + 间距 6）。
+  errBadge: css({
+    label: 'DdFlameErrBadge',
+    flex: 'none',
+    alignSelf: 'stretch',
+    marginLeft: -theme.trace.flame.labelPadding,
+    marginRight: theme.trace.flame.labelPadding,
+    width: 19,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     color: '#fff',
-    background: theme.colors.text.secondary,
-    borderRadius: 2,
-    whiteSpace: 'nowrap',
-  }),
-  tooltip: css({
-    label: 'DdFlameTooltip',
-    position: 'absolute',
-    zIndex: 4,
+    fontWeight: 700,
+    // Official canvas glyph is ~13px tall inside the 24px frame.
+    fontSize: 18,
+    lineHeight: 1,
     pointerEvents: 'none',
-    background: 'rgba(28,32,44,0.96)',
-    color: '#fff',
-    fontSize: 12,
-    lineHeight: 1.4,
-    padding: '6px 8px',
-    borderRadius: 4,
-    maxWidth: 320,
-    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
   }),
-  ttOp: css({ label: 'DdFlameTtOp', fontWeight: 600, wordBreak: 'break-all' }),
-  ttMeta: css({ label: 'DdFlameTtMeta', opacity: 0.8, marginTop: 2 }),
+  // 游标 overlay 需盖住矩形（zIndex 1）与 tooltip（4）之间；`DdTimeCursor` 自身只声明 inset:0。
+  cursorLayer: css({ label: 'DdFlameCursorLayer', position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none' }),
+  tooltip: css({ label: 'DdFlameTooltip', padding: 0, border: 0, borderRadius: 4, overflow: 'hidden', width: 'max-content', maxWidth: 'min(400px, calc(100vw - 16px))', pointerEvents: 'none' }),
+  anchor: css({ position: 'absolute', width: 0, height: 0, pointerEvents: 'none' }),
 });
 
 export interface DdFlameGraphViewProps {
@@ -116,6 +111,8 @@ export interface DdFlameGraphViewProps {
   groupKeyForSpan?: (span: TraceSpan) => string;
   /** 悬停某帧 → 其分组 key（离开传 null）。驱动图例反向高亮（Story 7.1 AC4）。 */
   onSpanHover?: (key: string | null) => void;
+  /** Transient details preview; does not change the selected span or URL. */
+  onPreviewSpan?: (spanID: string | null) => void;
   /** gridline 刻度数（Story 6.3），默认 5。 */
   numTicks?: number;
   className?: string;
@@ -125,9 +122,10 @@ export interface DdFlameGraphViewProps {
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 const MIN_WINDOW = 0.01;
 
+/** 火焰图无标签列：轴盒 = 整个画布，故只需记 x 与当帧画布宽度（`DdTimeCursor` 自己算时刻）。 */
 interface CursorState {
   x: number;
-  label: string;
+  width: number;
 }
 interface TooltipState {
   spanID: string;
@@ -146,7 +144,7 @@ export function DdFlameGraphView({
   highlightedGroupKey,
   groupKeyForSpan,
   onSpanHover,
-  numTicks = 5,
+  onPreviewSpan,
   className,
   style,
 }: DdFlameGraphViewProps) {
@@ -220,10 +218,9 @@ export function DdFlameGraphView({
       return;
     }
     const r = el.getBoundingClientRect();
-    const x = e.clientX - r.left;
-    const frac = r.width > 0 ? clamp(x / r.width, 0, 1) : 0;
-    const time = (viewStart + frac * (viewEnd - viewStart)) * effectiveDuration;
-    setCursor({ x, label: formatDuration(time) });
+    // 夹到画布内：鼠标压在边缘 1px 外时（拖拽中仍收到事件）游标不该消失。
+    const x = clamp(e.clientX - r.left, 0, r.width);
+    setCursor({ x, width: r.width });
 
     const drag = dragRef.current;
     if (drag && onViewRangeChange) {
@@ -253,6 +250,7 @@ export function DdFlameGraphView({
     setCursor(null);
     setTooltip(null);
     onSpanHover?.(null);
+    onPreviewSpan?.(null);
     endDrag();
   };
 
@@ -269,21 +267,28 @@ export function DdFlameGraphView({
       onMouseUp={endDrag}
       onMouseLeave={clearHover}
     >
-      <div className={styles.grid}>
-        <DdTicks numTicks={numTicks} viewDuration={trace.duration} viewStart={viewStart} viewEnd={viewEnd} showLabels={false} />
-      </div>
-
       {layout.rows.map((row) => {
         const span = spanById.get(row.spanID);
         if (!span) {
           return null;
         }
         const isSelected = selectedSpanId === row.spanID;
-        const dur = formatDuration(span.duration);
+        const dur = formatSpanDuration(span.duration);
+        const { resourceName } = spanPresentation(span);
         const clickable = onSelectSpan != null;
+        // Story 10.3：推断/未插桩下游依赖 span（db/peer/消息/rpc 客户端）= 空心 + 服务色虚线边（真页实测）。
+        // 判定复用 core `isInferredEntity`，与图例 `(inferred)` 后缀同源。
+        const inferred = isInferredEntity(span);
         // 灰显（Story 7.1）：有高亮分组且本帧不属于该组 → 定值灰填充（非降透明/去饱和，实测对齐 Datadog）。
         const dimmed =
           highlightedGroupKey != null && groupKeyForSpan != null && groupKeyForSpan(span) !== highlightedGroupKey;
+        // 灰显行只用 dimmedFill/secondary，不用服务色 → 惰性算，省去每帧灰显行的一次 resolveColor。
+        const barColor = dimmed ? '' : resolveColor(span);
+        // Story 10.7：error span 帧左缘 `!` 徽标（真页 errors 视图实测）。灰显时随帧一起淡出、不加徽标。
+        // 徽标底色：真页 getImageData 实测**选中的 error 帧用纯黑 `#000`（= 选中描边同色）**、其余 error 帧用错误红
+        // `status.error.fg`(#EB364B，实测逐位一致)。暗态选中徽标底色未采，沿用纯黑（+ 白 `!` 暗态仍可读）。
+        const showErrBadge = !dimmed && isErrorSpan(span);
+        const errBadgeBg = isSelected ? '#000' : theme.trace.status.error.fg;
         const classes = [styles.rect];
         if (isSelected) {
           classes.push(styles.selected);
@@ -296,8 +301,11 @@ export function DdFlameGraphView({
             key={row.spanID}
             data-testid="FlameRect"
             data-span-id={row.spanID}
+            data-inferred={inferred ? 'true' : undefined}
             role={clickable ? 'button' : undefined}
             tabIndex={clickable ? 0 : undefined}
+            aria-pressed={clickable ? isSelected : undefined}
+            aria-label={`${resourceName} ${dur}`}
             className={cx(...classes)}
             data-dimmed={dimmed ? 'true' : undefined}
             style={{
@@ -305,8 +313,13 @@ export function DdFlameGraphView({
               height: rowHeight - rowGap,
               left: `${row.left * 100}%`,
               width: `${Math.max(row.width * 100, 0)}%`,
-              background: dimmed ? theme.trace.flame.dimmedFill : resolveColor(span),
-              color: dimmed ? theme.colors.text.secondary : '#fff',
+              // 灰显优先于 inferred（真页高亮时非匹配帧一律定值灰，不再画虚线）。
+              background: dimmed ? theme.trace.flame.dimmedFill : inferred ? 'transparent' : barColor,
+              // Story 10.7：填充帧的字色随条底明暗（真页做法）；灰显帧走次文本、空心帧用服务色描字。
+              color: dimmed ? theme.colors.text.secondary : inferred ? barColor : readableTextColor(barColor),
+              border: !dimmed && inferred ? `1px dashed ${barColor}` : undefined,
+              outline: showErrBadge && !isSelected ? `2px solid ${theme.trace.status.error.fg}` : undefined,
+              outlineOffset: -2,
             }}
             onMouseEnter={(e) => {
               // 拖拽平移进行中：抑制 rect 的 hover 副作用（否则 tooltip 卡在 enter 点、
@@ -321,7 +334,17 @@ export function DdFlameGraphView({
                 y: r ? e.clientY - r.top : 0,
               });
               onSpanHover?.(groupKeyForSpan ? groupKeyForSpan(span) : null);
+              onPreviewSpan?.(row.spanID);
             }}
+            onMouseLeave={() => { setTooltip(null); onSpanHover?.(null); onPreviewSpan?.(null); }}
+            onFocus={(e) => {
+              if (!e.currentTarget.matches(':focus-visible')) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const root = rootRef.current!.getBoundingClientRect();
+              setTooltip({ spanID: row.spanID, x: rect.left - root.left, y: rect.bottom - root.top });
+              onPreviewSpan?.(row.spanID);
+            }}
+            onBlur={clearHover}
             onClick={
               clickable
                 ? () => {
@@ -336,6 +359,7 @@ export function DdFlameGraphView({
             onKeyDown={
               clickable
                 ? (e) => {
+                    if (e.key === 'Escape') { e.stopPropagation(); clearHover(); }
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
                       onSelectSpan!(row.spanID);
@@ -344,30 +368,38 @@ export function DdFlameGraphView({
                 : undefined
             }
           >
-            <span className={styles.op}>{span.operationName}</span>
+            {showErrBadge && (
+              <span className={styles.errBadge} style={{ background: errBadgeBg }} data-testid="FlameErrBadge" aria-hidden="true">
+                !
+              </span>
+            )}
+            <span className={styles.op}>{resourceName}</span>
             <span className={styles.dur}>{dur}</span>
           </div>
         );
       })}
 
       {cursor && (
-        <div className={styles.cursor} style={{ left: cursor.x }} data-testid="FlameCursor">
-          <span className={styles.cursorLabel}>{cursor.label}</span>
+        <div className={styles.cursorLayer}>
+          {/* anchorY=0：药丸浮到画布之上（盖住 DdFlameRuler 的刻度文字），与瀑布图药丸压住表头刻度的观感一致。 */}
+          <DdTimeCursor
+            cursorX={cursor.x}
+            geo={flameGeometry(cursor.width, effectiveDuration, viewStart, viewEnd)}
+            anchorY={0}
+          />
         </div>
       )}
 
-      {tooltip && hoveredSpan && (
-        <div
-          className={styles.tooltip}
-          style={{ left: tooltip.x + 12, top: tooltip.y + 12 }}
-          data-testid="FlameTooltip"
-        >
-          <div className={styles.ttOp}>{hoveredSpan.operationName}</div>
-          <div className={styles.ttMeta}>
-            {getServiceDisplayName(hoveredSpan.process)} · {formatDuration(hoveredSpan.duration)}
-          </div>
-        </div>
-      )}
+      <PopoverRoot open={tooltip != null && hoveredSpan != null} onOpenChange={(open) => { if (!open) clearHover(); }}>
+        <PopoverAnchor asChild><span className={styles.anchor} style={{ left: tooltip?.x ?? 0, top: (tooltip?.y ?? 0) - 12 }} /></PopoverAnchor>
+        <PopoverContent placement="right-end" sideOffset={24} collisionPadding={8}
+          isPadded={false} isArrowHidden className={styles.tooltip} data-testid="FlameTooltip"
+          role="tooltip" aria-label="Span summary"
+          onEscapeKeyDown={event => { event.preventDefault(); event.stopPropagation(); clearHover(); }}
+          onOpenAutoFocus={event => event.preventDefault()} onCloseAutoFocus={event => event.preventDefault()}>
+          {hoveredSpan && <DdSpanHoverCard span={hoveredSpan} color={resolveColor(hoveredSpan)} traceDuration={trace.duration} isError={isErrorSpan(hoveredSpan)} />}
+        </PopoverContent>
+      </PopoverRoot>
     </div>
   );
 }

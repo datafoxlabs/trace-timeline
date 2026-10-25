@@ -53,9 +53,19 @@ describe('isErrorSpan', () => {
   it('OTel statusCode===2 判错', () => {
     expect(isErrorSpan(mk({ spanID: 'a', depth: 0, statusCode: 2 }))).toBe(true);
   });
-  it('error=true / "true" tag 判错', () => {
-    expect(isErrorSpan(mk({ spanID: 'a', depth: 0, tags: [{ key: 'error', value: true } as Tag] }))).toBe(true);
-    expect(isErrorSpan(mk({ spanID: 'b', depth: 0, tags: [{ key: 'error', value: 'true' } as Tag] }))).toBe(true);
+  it.each([undefined, 0, 1])('非 Error 状态 %s 不被属性或 HTTP 状态码覆盖', (statusCode) => {
+    for (const error of [true, 'true']) {
+      expect(isErrorSpan(mk({ spanID: 'a', depth: 0, statusCode, tags: [
+        { key: 'error', value: error },
+        { key: 'http.status_code', value: 500 },
+        { key: 'exception.message', value: 'handled exception' },
+      ] }))).toBe(false);
+    }
+  });
+  it('Error 状态不被 error=false 或 HTTP 200 覆盖', () => {
+    expect(isErrorSpan(mk({ spanID: 'a', depth: 0, statusCode: 2, tags: [
+      { key: 'error', value: false }, { key: 'http.status_code', value: 200 },
+    ] }))).toBe(true);
   });
   it('正常 span 不判错', () => {
     expect(isErrorSpan(mk({ spanID: 'a', depth: 0 }))).toBe(false);
@@ -63,6 +73,10 @@ describe('isErrorSpan', () => {
 });
 
 describe('spanContainsErredSpan', () => {
+  it('只有 error 属性的后代不使父节点显示后代错误', () => {
+    const spans = [mk({ spanID: 'root', depth: 0 }), mk({ spanID: 'child', depth: 1, tags: [{ key: 'error', value: true }] })];
+    expect(spanContainsErredSpan(spans, 0)).toBe(false);
+  });
   it('后代含错返回 true，否则 false', () => {
     const spans = [
       mk({ spanID: 'root', depth: 0 }),

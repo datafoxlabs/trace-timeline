@@ -24,8 +24,11 @@ function findTagValue(span: TraceSpan, keys: string[]): string | undefined {
   return undefined;
 }
 
-/** span 是否为「推断」下游依赖（db / 外部 peer / 消息 / rpc 客户端）——Entity Type 维度标 (inferred)。 */
-function isInferredEntity(span: TraceSpan): boolean {
+/**
+ * span 是否为「推断」下游依赖（db / 外部 peer / 消息 / rpc 客户端）——Entity Type 维度标 (inferred)。
+ * Story 10.3：火焰图给这类 span 画空心 + 服务色虚线条,与图例 `(inferred)` 后缀**同判定源**。
+ */
+export function isInferredEntity(span: TraceSpan): boolean {
   return (
     findTagValue(span, ['db.system', 'db.type', 'peer.service', 'messaging.system', 'rpc.system']) != null
   );

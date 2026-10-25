@@ -54,7 +54,10 @@ type RowState = {
 
 /** 行高常量，由 core 唯一拥有（AD-12）；api 可经 rowHeights 覆盖。 */
 export const DEFAULT_HEIGHTS = {
-  bar: 28,
+  // Story 9.3（D2）：行高按真页 DRUIDS Table 实测 `grid-auto-rows: 23px`（原 28）。
+  // 配合 DdSpanRow 去掉 1px 下边框后，heightGetter(23) 与 clientHeight(23) 恰好一致
+  // （此前 28 - 1px border = 27，估算与 _scanItemHeights 实测差 1px）。
+  bar: 23,
   // detail 行为初始估值——皮肤详情卡为自然高度，ListView _scanItemHeights 测量真实高后修正（AD-12）。
   // Datadog 结构详情卡（header+tabs+pinned+语义分组）较高，估值取大以减少首帧跳动。
   detail: 320,
@@ -183,10 +186,15 @@ const memoizedChildSpansMap = memoizeOne(childSpansMap);
 
 export default class VirtualizedTraceView extends React.Component<VirtualizedTraceViewProps> {
   listView: ListView | TNil;
-  hasScrolledToSpan = false;
+  pendingScrollSpanId: string | undefined;
 
   componentDidMount() {
-    this.scrollToSpan(this.props.headerHeight, this.props.focusedSpanId);
+    this.pendingScrollSpanId = this.props.focusedSpanIdForSearch ?? this.props.focusedSpanId;
+    this.flushPendingScroll();
+  }
+
+  flushPendingScroll() {
+    if (this.scrollToSpan(this.props.headerHeight, this.pendingScrollSpanId)) this.pendingScrollSpanId = undefined;
   }
 
   shouldComponentUpdate(nextProps: VirtualizedTraceViewProps) {
@@ -201,20 +209,11 @@ export default class VirtualizedTraceView extends React.Component<VirtualizedTra
   }
 
   componentDidUpdate(prevProps: Readonly<VirtualizedTraceViewProps>) {
-    const { headerHeight, focusedSpanId, focusedSpanIdForSearch } = this.props;
-
-    if (!this.hasScrolledToSpan) {
-      this.scrollToSpan(headerHeight, focusedSpanId);
-      this.hasScrolledToSpan = true;
-    }
-
-    if (focusedSpanId !== prevProps.focusedSpanId) {
-      this.scrollToSpan(headerHeight, focusedSpanId);
-    }
-
-    if (focusedSpanIdForSearch !== prevProps.focusedSpanIdForSearch) {
-      this.scrollToSpan(headerHeight, focusedSpanIdForSearch);
-    }
+    const { focusedSpanId, focusedSpanIdForSearch, trace } = this.props;
+    if (focusedSpanId !== prevProps.focusedSpanId || trace !== prevProps.trace) this.pendingScrollSpanId = focusedSpanId;
+    if (focusedSpanIdForSearch !== prevProps.focusedSpanIdForSearch) this.pendingScrollSpanId = focusedSpanIdForSearch ?? focusedSpanId;
+    // A navigation target may become visible only after its ancestors expand.
+    this.flushPendingScroll();
   }
 
   getRowStates(): RowState[] {
@@ -298,7 +297,9 @@ export default class VirtualizedTraceView extends React.Component<VirtualizedTra
     }
     const i = this.getRowStates().findIndex((row) => row.span.spanID === spanID);
     if (i >= 0) {
-      this.listView?.scrollToIndex(i, headerHeight);
+      if (!this.listView) return false;
+      this.listView.scrollToIndex(i, headerHeight);
+      return true;
     }
   };
 
@@ -307,8 +308,16 @@ export default class VirtualizedTraceView extends React.Component<VirtualizedTra
    * 替换上游 renderSpanBarRow/renderSpanDetailRow 中除「着色」外的全部数据计算。
    */
   buildRenderableRow(index: number): RenderableRow {
-    const { span, isDetail, spanIndex } = this.getRowStates()[index];
+    const rowStates = this.getRowStates();
+    const { span, isDetail, spanIndex } = rowStates[index];
     const { spanID, depth, childSpanIds } = span;
+
+    // 相邻可见 span 行（Story 9.4d）。detail 行不是 span 行——它夹在两个 span 行之间，
+    // 于是把服务连段截断，上下两行各自收口。真页无内联 detail 行，此为本仓的等价推论。
+    const prevRow = rowStates[index - 1];
+    const nextRow = rowStates[index + 1];
+    const prevSpan = prevRow && !prevRow.isDetail ? prevRow.span : undefined;
+    const nextSpan = nextRow && !nextRow.isDetail ? nextRow.span : undefined;
     const {
       childrenHiddenIDs,
       detailStates,
@@ -336,7 +345,7 @@ export default class VirtualizedTraceView extends React.Component<VirtualizedTra
     const clipping = this.getClipping();
 
     // 根→父有序，length === depth（AD-2）；model 的 spanAncestorIds 返回近→远，reverse 得根→父。
-    const ancestorSpanIds = spanAncestorIds(span).reverse();
+    const ancestorSpanIds = spanAncestorIds(span).slice(0, depth).reverse();
 
     // 折叠 client 时取直接 server 子（RPC 合并，无颜色，AD-6）。
     let rpc: RenderableRow['rpc'];
@@ -386,6 +395,8 @@ export default class VirtualizedTraceView extends React.Component<VirtualizedTra
       isDetail,
       depth,
       ancestorSpanIds,
+      prevSpan,
+      nextSpan,
       viewBounds: {
         start: bounds.start,
         end: bounds.end,

@@ -22,8 +22,10 @@ describe('createTheme', () => {
 
   it('theme.trace 字段齐全', () => {
     const t = createTheme();
-    expect(t.trace.barRadius).toBe('2px 2px 0 0');
-    expect(t.trace.barHeight).toBe(19);
+    // Story 9.3（D2）：真页实测 bar 为 height:15 + 四角全圆 2px；
+    // 旧断言 '2px 2px 0 0' / 19 记的是被误认作 bar 的 `span-separator`。
+    expect(t.trace.barRadius).toBe('2px');
+    expect(t.trace.barHeight).toBe(15);
     expect(t.trace.selectedRowBg).toBe('rgb(234,246,252)');
     expect(t.trace.categoricalPalette.length).toBeGreaterThan(0);
     expect(t.trace.status.error.fg).toBe('#EB364B');

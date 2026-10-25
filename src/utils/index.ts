@@ -6,6 +6,7 @@ export {
   formatMillisecondTime,
   formatSecondTime,
   formatDuration,
+  formatSpanDuration,
   STANDARD_DATE_FORMAT,
   STANDARD_TIME_FORMAT,
   ONE_MILLISECOND,
@@ -15,6 +16,7 @@ export {
   ONE_DAY,
 } from './date';
 export { localeStringComparator, classNameForSortDir, getNewSortForClick } from './sort';
+export { niceTickValues, tickStep } from './ticks';
 export {
   DraggableManager,
   EUpdateTypes,

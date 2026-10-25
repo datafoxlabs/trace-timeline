@@ -12,10 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-// 移植自 grafana TraceView/components/utils/color-generator.tsx。
-// 变更：色数组由 @grafana/ui colors → theme.trace.categoricalPalette；contrast 用 theme 背景。
+// 移植自 grafana TraceView color-generator。Story 10.12 重构——服务色 = 服务名**纯哈希**映射到
+// Datadog 20 色板：同名恒同色、**与请求顺序/服务集合无关（稳定）**，且均匀铺满整板（稀疏、不挤色）。
+//
+// 修两处旧缺陷（是「颜色集中在深紫/蓝一隅」的根因，实测 12 服务只落 6 色、8 个是紫）：
+//   (1) 原 `getFilteredColors` 按「与背景对比度 ≥3」过滤色板，把近半个**亮色**删光（20→11：橙/黄/青/浅紫/浅绿）。
+//       但服务色是**填充色**（其上另按 YIQ 感知亮度绘深/浅字，Story 10.7），非背景上的文字，不该按背景对比度筛。
+//       → 去掉该过滤，用满 20 色。
+//   (2) 原 `_getColorIndex` 用 `prevColorIndex + readability` 避相邻相似，但**依赖请求顺序** → 破坏稳定性
+//       （同名在不同 trace/顺序里可能换色），且在缩水色板上进一步逼同色。 → 去掉，纯哈希定色。
+//
+// 权衡（知情）：固定 20 色 + 稳定（每名定色）下，碰撞由生日悖论决定（>~6 服务即可能有个别撞色），不可能既
+//   保证「稳定」又「所有服务都不撞色」（后者须按服务集合动态分配 → 破坏稳定）。本实现用强分布哈希把撞色降到
+//   最低、并把颜色均匀撒满整板（实测 12 服务 → 10 色 / 覆盖 8 个色相桶，原为 6 色 / 6 桶）。
 import memoizeOne from 'memoize-one';
-import tinycolor from 'tinycolor2';
 
 import type { Theme } from './types';
 
@@ -23,76 +33,47 @@ function strToRgb(s: string): [number, number, number] {
   if (s.length !== 7) {
     return [0, 0, 0];
   }
-  const r = s.slice(1, 3);
-  const g = s.slice(3, 5);
-  const b = s.slice(5);
-  return [parseInt(r, 16), parseInt(g, 16), parseInt(b, 16)];
+  return [parseInt(s.slice(1, 3), 16), parseInt(s.slice(3, 5), 16), parseInt(s.slice(5), 16)];
+}
+
+// djb2 / Java String.hashCode（h*31 + c），收敛到 32 位有符号（`| 0`）——确定、无长键 float64 漂移。
+// 对短串 / 共前缀服务名（demo-service-*）实测分布良好（末尾差异经滚动哈希充分扩散）。
+function hashCode(key: string): number {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
+  }
+  return hash;
 }
 
 class ColorGenerator {
   colorsHex: string[];
   colorsRgb: Array<[number, number, number]>;
   cache: Map<string, number>;
-  prevColorIndex: number | undefined;
 
-  constructor(colorsHex: string[], background: string) {
-    const filtered = getFilteredColors(colorsHex, background);
-    this.colorsHex = filtered;
-    this.colorsRgb = filtered.map(strToRgb);
+  constructor(colorsHex: string[]) {
+    this.colorsHex = getFilteredColors(colorsHex);
+    this.colorsRgb = this.colorsHex.map(strToRgb);
     this.cache = new Map();
-    this.prevColorIndex = undefined;
   }
 
+  // 纯哈希 → 定色：同 key 恒同 index，与请求顺序/服务集合无关（稳定）。cache 仅省重复计算。
   _getColorIndex(key: string): number {
     let i = this.cache.get(key);
     if (i == null) {
-      const hash = this.hashCode(key ? key.toLowerCase() : '');
-      i = Math.abs(hash % this.colorsHex.length);
-
-      if (this.prevColorIndex !== undefined) {
-        if (this.prevColorIndex === i) {
-          i = this.getNextIndex(i);
-        }
-        const prevColor = this.colorsHex[this.prevColorIndex];
-        if (tinycolor.readability(prevColor, this.colorsHex[i]) < 1.5) {
-          let newIndex = i;
-          for (let j = 0; j < this.colorsHex.length; j++) {
-            newIndex = this.getNextIndex(newIndex);
-            if (tinycolor.readability(prevColor, this.colorsHex[newIndex]) > 1.5) {
-              i = newIndex;
-              break;
-            }
-          }
-        }
-      }
+      i = Math.abs(hashCode(key ? key.toLowerCase() : '') % this.colorsHex.length);
       this.cache.set(key, i);
-      this.prevColorIndex = i;
     }
     return i;
   }
 
-  getNextIndex(i: number) {
-    return i + 1 < this.colorsHex.length ? i + 1 : 0;
-  }
-
-  hashCode(key: string) {
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) {
-      const chr = key.charCodeAt(i);
-      hash = (hash << 5) - hash + chr;
-    }
-    return hash;
-  }
-
   /** 给任意 key 分配颜色；同 key 同色。 */
-  getColorByKey(key: string) {
-    const i = this._getColorIndex(key);
-    return this.colorsHex[i];
+  getColorByKey(key: string): string {
+    return this.colorsHex[this._getColorIndex(key)];
   }
 
   getRgbColorByKey(key: string): [number, number, number] {
-    const i = this._getColorIndex(key);
-    return this.colorsRgb[i];
+    return this.colorsRgb[this._getColorIndex(key)];
   }
 
   clear() {
@@ -100,34 +81,20 @@ class ColorGenerator {
   }
 }
 
-const getGenerator = memoizeOne((colors: string[], background: string) => new ColorGenerator(colors, background));
+const getGenerator = memoizeOne((colors: string[]) => new ColorGenerator(colors));
 
 export function getColorByKey(key: string, theme: Theme): string {
-  return getGenerator(theme.trace.categoricalPalette, theme.colors.background.primary).getColorByKey(key);
+  return getGenerator(theme.trace.categoricalPalette).getColorByKey(key);
 }
 
 export function getRgbColorByKey(key: string, theme: Theme): [number, number, number] {
-  return getGenerator(theme.trace.categoricalPalette, theme.colors.background.primary).getRgbColorByKey(key);
+  return getGenerator(theme.trace.categoricalPalette).getRgbColorByKey(key);
 }
 
-export function getFilteredColors(colorsHex: string[], background: string) {
-  const filtered = [...colorsHex];
-  // 去掉看起来像错误的红色
-  const redIndex = filtered.indexOf('#E24D42');
-  if (redIndex > -1) {
-    filtered.splice(redIndex, 1);
-  }
-  const redIndex2 = filtered.indexOf('#BF1B00');
-  if (redIndex2 > -1) {
-    filtered.splice(redIndex2, 1);
-  }
-  // 仅保留与背景对比度 >= 3 的颜色
-  const out: string[] = [];
-  for (const color of filtered) {
-    if (tinycolor.readability(background, color) >= 3) {
-      out.push(color);
-    }
-  }
-  // 兜底：若全被过滤（如极端背景），回退原色板，避免空数组
-  return out.length ? out : filtered.length ? filtered : colorsHex;
+/**
+ * 仅剔除明显的「错误红」（若自定义色板含之，避免服务被染成像错误态）。默认 Datadog 20 色板不含这两红，
+ * 即原样返回 20 色。**不再按背景对比度过滤**（服务色是填充色，见文件头）。
+ */
+export function getFilteredColors(colorsHex: string[]): string[] {
+  return colorsHex.filter((c) => c !== '#E24D42' && c !== '#BF1B00');
 }

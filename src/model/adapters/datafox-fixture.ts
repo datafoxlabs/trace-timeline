@@ -1,113 +1,63 @@
-// DataFox `/api/v3/spans/search` 响应 fixture（Grafana DataFrame 列式，OTLP 字段）——
-// 用于 fromDataFox 单测 + demo，不依赖真实网络。结构对齐 addendum E2 实测。
+// Synthetic DataFrame fixture: 96 spans, 12 services and maximum depth 17.
+// IDs, services, operations, hosts, timestamps and topology are generated here;
+// no production trace data is used. Units: timestamp in ms, duration in ns.
 import type { DataFoxResponse } from './fromDataFox';
 
 const FIELDS = [
-  'trace_id',
-  'span_id',
-  'parent_span_id',
-  'timestamp', // epoch ms
-  'duration', // ns
-  'service_name',
-  'operation_name',
-  'span_name',
-  'resource_name',
-  'span_kind',
-  'status_code',
-  'status_message',
-  'exception_type',
-  'exception_message',
-  'resource_attributes_raw',
-  'span_attributes_raw',
-  'events',
-  'scope_name',
-  'scope_version',
+  'trace_id', 'span_id', 'parent_span_id', 'timestamp', 'duration',
+  'service_name', 'operation_name', 'span_name', 'resource_name', 'span_kind',
+  'status_code', 'status_message', 'exception_type', 'exception_message',
+  'resource_attributes_raw', 'span_attributes_raw', 'events', 'scope_name', 'scope_version',
 ] as const;
 
-// 3 span：root server(GET /user) → client(GET /order，跨服务) → 孤儿父子(parent 不在结果集→按 root)
-const TID = 'aabbccddeeff00112233445566778899';
-const T0_MS = 1_700_000_000_000; // epoch ms
-
 type Row = Record<(typeof FIELDS)[number], unknown>;
+const TRACE_ID = '0123456789abcdef0123456789abcdef';
+const START_MS = 1_700_000_000_000;
+const spanId = (index: number) => `demo-span-${String(index + 1).padStart(3, '0')}`;
+const rows: Row[] = [];
 
-const rows: Row[] = [
-  {
-    trace_id: TID,
-    span_id: 'sp-root',
-    parent_span_id: '',
-    timestamp: T0_MS,
-    duration: 102_000_000, // 102ms in ns
-    service_name: 'mall-order-api',
-    operation_name: 'GET /user',
-    span_name: 'servlet.request',
-    resource_name: 'GET /user',
-    span_kind: 'server',
+for (let index = 0; index < 96; index++) {
+  const parent = index < 18 ? index - 1 : (index - 18) % 17;
+  const parentStart = parent < 0 ? 0 : parent * 2_125;
+  const offsetUs = index < 18 ? index * 2_125 : parentStart + 100 + (index % 8) * 250;
+  const durationUs = index < 18 ? 80_000 - index * 4_000 : 25 + (index % 12) * 100;
+  const kind = index === 18 ? 'redis' : index === 0 ? 'http.server' : 'internal';
+  rows.push({
+    trace_id: TRACE_ID,
+    span_id: spanId(index),
+    parent_span_id: index === 0 ? 'demo-missing-parent' : spanId(parent),
+    timestamp: START_MS + offsetUs / 1_000,
+    duration: durationUs * 1_000,
+    service_name: `demo-service-${String(index % 12 + 1).padStart(2, '0')}`,
+    operation_name: index === 0 ? 'GET /orders/{orderId}' : index === 18 ? 'GET' : `process.step.${index}`,
+    span_name: '',
+    resource_name: '',
+    span_kind: kind,
     status_code: 'Ok',
     status_message: '',
     exception_type: '',
     exception_message: '',
-    resource_attributes_raw: JSON.stringify({ 'telemetry.sdk.language': 'java' }),
-    span_attributes_raw: JSON.stringify({ 'http.method': 'GET', 'http.status_code': 200, 'http.url': 'http://localhost:9001/user' }),
-    events: JSON.stringify([]),
-    scope_name: 'io.opentelemetry.servlet',
-    scope_version: '1.0',
-  },
-  {
-    trace_id: TID,
-    span_id: 'sp-order',
-    parent_span_id: 'sp-root',
-    timestamp: T0_MS + 40, // +40ms
-    duration: 18_500_000, // 18.5ms
-    service_name: 'user-service',
-    operation_name: 'GET /order',
-    span_name: 'GET /order',
-    resource_name: 'GET /order',
-    span_kind: 'client',
-    status_code: 'Ok',
-    status_message: '',
-    exception_type: '',
-    exception_message: '',
-    resource_attributes_raw: JSON.stringify({}),
-    span_attributes_raw: JSON.stringify({ 'http.status_code': 200, 'peer.service': 'user-service' }),
-    events: JSON.stringify([{ timestamp: (T0_MS + 45) * 1_000_000, name: 'rpc.start', attributes: { rpc: 'grpc' } }]),
-    scope_name: '',
-    scope_version: '',
-  },
-  {
-    trace_id: TID,
-    span_id: 'sp-err',
-    parent_span_id: 'sp-root',
-    timestamp: T0_MS + 60,
-    duration: 34_900_000, // 34.9ms
-    service_name: 'mall-order-api',
-    operation_name: 'GET /error',
-    span_name: 'GET /error',
-    resource_name: 'GET /error',
-    span_kind: 'server',
-    status_code: 'Error',
-    status_message: 'internal error',
-    exception_type: 'NullPointerException',
-    exception_message: 'npe at line 42',
-    resource_attributes_raw: JSON.stringify({ 'telemetry.sdk.language': 'java' }),
-    span_attributes_raw: JSON.stringify({ 'http.method': 'GET', 'http.status_code': 500 }),
-    events: JSON.stringify([]),
-    scope_name: '',
-    scope_version: '',
-  },
-];
+    resource_attributes_raw: '{}',
+    span_attributes_raw: index === 0 ? JSON.stringify({ requestHost: 'api.example.com' }) : '{}',
+    events: '[]',
+    scope_name: 'demo.instrumentation',
+    scope_version: '1.0.0',
+  });
+}
 
-// 行式 → 列式（DataFrame data.values 按字段列存）。
-const values = FIELDS.map((f) => rows.map((r) => r[f]));
+// Include sub-millisecond precision and an async span extending beyond the root.
+rows[18].duration = 25_000;
+rows[95].parent_span_id = spanId(0);
+rows[95].timestamp = START_MS + 70;
+rows[95].duration = 70_000_000;
 
 export const dataFoxFixture: DataFoxResponse = {
   data: {
     A: {
-      frames: [
-        {
-          schema: { fields: FIELDS.map((name) => ({ name })) },
-          data: { values },
-        },
-      ],
+      frames: [{
+        schema: { fields: FIELDS.map((name) => ({ name })) },
+        data: { values: FIELDS.map((field) => rows.map((row) => row[field])) },
+      }],
     },
   },
 };

@@ -1,16 +1,12 @@
 {
   "name": "@datafox/trace-timeline",
-  "version": "0.1.0",
-  "description": "Datadog 风格 Trace Timeline 组件库（Grafana 引擎 + Datadog 皮肤 + 可插拔后端适配器）",
-  "license": "Apache-2.0",
+  "version": "0.1.41",
+  "description": "React trace waterfall and flame graph with pluggable data sources",
   "type": "module",
   "sideEffects": false,
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/<your-org>/trace-timeline.git"
-  },
   "files": [
     "dist",
+    "licenses",
     "LICENSE",
     "NOTICE"
   ],
@@ -39,21 +35,24 @@
     "dev": "vite"
   },
   "peerDependencies": {
+    "@datafox/ui": "^0.1.13",
     "react": "^18.3.1 || ^19.0.0",
     "react-dom": "^18.3.1 || ^19.0.0"
   },
   "dependencies": {
     "@emotion/css": "^11.11.2",
     "@opentelemetry/api": "^1.7.0",
+    "@tanstack/react-virtual": "^3.14.13",
     "classnames": "^2.5.1",
     "dayjs": "^1.11.10",
     "dompurify": "^3.0.6",
     "lodash": "^4.17.21",
-    "lucide-react": "^0.263.1",
     "memoize-one": "^6.0.0",
+    "sql-formatter": "^15.8.2",
     "tinycolor2": "^1.6.0"
   },
   "devDependencies": {
+    "@datafox/ui": "file:vendor/datafox-ui-0.1.13.tgz",
     "@testing-library/jest-dom": "^6.2.0",
     "@testing-library/react": "^14.2.1",
     "@types/dompurify": "^3.0.5",
@@ -69,5 +68,14 @@
     "typescript": "^5.3.3",
     "vite": "^5.1.4",
     "vitest": "^1.3.1"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/datafoxlabs/trace-timeline.git"
+  },
+  "homepage": "https://github.com/datafoxlabs/trace-timeline#readme",
+  "bugs": {
+    "url": "https://github.com/datafoxlabs/trace-timeline/issues"
   }
 }

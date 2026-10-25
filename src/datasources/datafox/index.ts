@@ -8,4 +8,6 @@ export {
 } from '../../model/adapters/fromDataFox';
 export { dataFoxFixture } from '../../model/adapters/datafox-fixture';
 // 可选取数助手（AD-14；仍 props 驱动，库本身不强制取数）。
-export { fetchTrace, type FetchTraceOptions, type FetchLike } from '../../data/datafox/client';
+export { fetchTrace, fetchTraceDetail, createDataFoxTraceUrl, type FetchTraceOptions, type FetchLike } from '../../data/datafox/client';
+
+export { parseDataFoxTraceDetail, parseDataFoxEventTime, DataFoxTraceError, type DataFoxTraceDetail, type DataFoxEntity } from '../../model/adapters/datafoxTraceDetail';

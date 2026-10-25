@@ -13,8 +13,8 @@
 // limitations under the License.
 //
 // 移植自 grafana TraceView/components/utils/span-ancestor-ids.tsx。
-import _find from 'lodash/find';
-import _get from 'lodash/get';
+import _find from 'lodash/find.js';
+import _get from 'lodash/get.js';
 
 import type { TraceSpan } from './types';
 

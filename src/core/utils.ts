@@ -76,21 +76,19 @@ const isServerOtel = (span: TraceSpan) => span.kind === 'server';
 const isServer = spanHasTag.bind(null, 'span.kind', 'server');
 export const isServerSpan = (span: TraceSpan) => isServerOtel(span) || isServer(span);
 
-const isErrorOtel = (span: TraceSpan) => span.statusCode === 2;
-const isErrorBool = spanHasTag.bind(null, 'error', true);
-const isErrorStr = spanHasTag.bind(null, 'error', 'true');
-export const isErrorSpan = (span: TraceSpan) => isErrorOtel(span) || isErrorBool(span) || isErrorStr(span);
+/** OTel Span Status is authoritative; attributes and HTTP codes do not override it. */
+export const isErrorSpan = (span: TraceSpan) => span.statusCode === 2;
 
 /**
  * Returns `true` if at least one of the descendants of the `parentSpanIndex`
- * span contains an error tag.
+ * span has OTel Error status.
  *
  * @param      {TraceSpan[]}   spans            The spans for a trace - should be
  *                                         sorted with children following parents.
  * @param      {number}   parentSpanIndex  The index of the parent span - only
  *                                         subsequent spans with depth less than
  *                                         the parent span will be checked.
- * @returns     {boolean}  Returns `true` if a descendant contains an error tag.
+ * @returns     {boolean}  Returns `true` if a descendant has OTel Error status.
  */
 export function spanContainsErredSpan(spans: TraceSpan[], parentSpanIndex: number) {
   const { depth } = spans[parentSpanIndex];

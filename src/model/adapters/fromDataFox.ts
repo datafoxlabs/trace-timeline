@@ -131,6 +131,8 @@ export function decodeDataFox(resp: DataFoxResponse): TraceResponse | null {
   const operationNames = col('operation_name');
   const spanNames = col('span_name');
   const resourceNames = col('resource_name');
+  const entityTypes = col('entity_type');
+  const technologies = col('technology');
   const kinds = col('span_kind');
   const statusCodes = col('status_code');
   const statusMessages = col('status_message');
@@ -177,7 +179,16 @@ export function decodeDataFox(resp: DataFoxResponse): TraceResponse | null {
     const processID = processIdFor(serviceName, resAttrs);
 
     // span tags：span_attributes_raw + 派生（kind/status/exception/scope）。
-    const tags: TraceKeyValuePair[] = parseAttrs(spanAttrsRaw[i]);
+    const rawSpanAttributes = parseAttrs(spanAttrsRaw[i]);
+    const tags: TraceKeyValuePair[] = [...rawSpanAttributes];
+    // Backend classification is presentation metadata, independent of the owning service.
+    for (const [key, value] of [['datafox.entity.type', entityTypes[i]], ['datafox.entity.technology', technologies[i]]] as const) {
+      if (typeof value === 'string' && value.trim()) tags.push({ key, value });
+    }
+    const resourceName = resourceNames[i];
+    if (typeof resourceName === 'string' && resourceName && !tags.some((tag) => tag.key === 'resource.name')) {
+      tags.push({ key: 'resource.name', value: resourceName });
+    }
     const kind = kinds[i] != null ? String(kinds[i]) : undefined;
     if (kind) {
       tags.push({ key: 'span.kind', value: kind });
@@ -218,6 +229,8 @@ export function decodeDataFox(resp: DataFoxResponse): TraceResponse | null {
       duration,
       logs: parseEvents(eventsCol[i]),
       tags,
+      rawSpanAttributes,
+      rawResourceAttributes: resAttrs,
       kind,
       statusCode: exType || exMsg ? 2 : statusCode,
       statusMessage: statusMessages[i] != null ? String(statusMessages[i]) : undefined,

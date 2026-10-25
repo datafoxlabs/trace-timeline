@@ -1,4 +1,4 @@
-# 写一个 Trace 数据源（data source）（AD-15）
+# 写一个 Trace 数据源（data source）
 
 `@datafox/trace-timeline` 的核心包是**后端中立**的:渲染层（`<TraceTimeline>` / 火焰图）只认内部派生的 `Trace`,从不关心数据来自哪个后端。要接一个新 trace 后端(Jaeger / Tempo / Zipkin / 你自研的网关…),你只需实现一个**数据源**:把后端的 wire 格式解码成规范的 `TraceResponse`。
 
@@ -43,7 +43,7 @@ type TraceResponse = {
     operationName: string;
     startTime: number;   // µs
     duration: number;    // µs
-    tags?: KeyValuePair[];          // span 属性;error span 建议带 { key:'error', value:true }
+    tags?: KeyValuePair[];          // span 属性;错误状态使用 statusCode: 2
     logs: Array<{ timestamp: number; fields: KeyValuePair[]; name?: string }>;  // µs
     kind?: string;                  // 'server' | 'client' | ...
     statusCode?: number;            // 2 = error（引擎据此判错）

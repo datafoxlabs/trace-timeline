@@ -21,7 +21,7 @@ export {
 export { default as computeTraceCriticalPath } from './criticalPath';
 export { computeFlameLayout, getFlameSubtreeIds } from './flameLayout';
 export type { FlameLayout, FlameLayoutRow, FlameViewRange } from './flameLayout';
-export { computeLegendGroups, dimensionKeyFor, dimensionLabelFor } from './legendGroups';
+export { computeLegendGroups, dimensionKeyFor, dimensionLabelFor, isInferredEntity } from './legendGroups';
 export type { LegendGroup, LegendDimension, LegendMetric, LegendOptions } from './legendGroups';
 export type { RenderableRow, RowRenderer, RpcInfo, ViewBounds } from './rowRenderer.types';
 export type { TNil, ViewRange, ViewRangeTime, ViewRangeTimeUpdate, TUpdateViewRangeTimeFunction } from './types';

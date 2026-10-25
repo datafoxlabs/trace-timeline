@@ -20,10 +20,14 @@ export interface DatadogSkinOptions {
   detailStubs?: DetailStubs;
   /** 当前选中 span（选中行高亮；Story 5.5）。 */
   selectedSpanId?: string;
+  /** 点击行内准星（Story 9.4 / B）。不传 → 准星不渲染。 */
+  onFocusSpan?: (spanID: string) => void;
+  focusedRootSpanId?: string;
+  onUnfocusSpan?: () => void;
 }
 
 export function createDatadogRowRenderer(opts: DatadogSkinOptions): RowRenderer {
-  const { theme, trace, detailToggles, detailStubs, selectedSpanId } = opts;
+  const { theme, trace, detailToggles, detailStubs, selectedSpanId, onFocusSpan } = opts;
   const colorAccessor = opts.colorAccessor ?? defaultColorAccessor(theme);
   // spanID → 服务色，供缩进竖线解析祖先色（core 只给 ancestorSpanIds，AD-6）。
   const spanMap = new Map(trace.spans.map((s) => [s.spanID, s]));
@@ -33,12 +37,17 @@ export function createDatadogRowRenderer(opts: DatadogSkinOptions): RowRenderer 
   };
   return (row) => (
     <DdSpanRow
+      key={row.span.spanID}
       row={row}
       colorAccessor={colorAccessor}
       colorForSpanId={colorForSpanId}
       detailToggles={detailToggles}
       detailStubs={detailStubs}
       isSelected={selectedSpanId != null && row.span.spanID === selectedSpanId}
+      onFocusSpan={onFocusSpan}
+      isFocusRoot={row.span.spanID === opts.focusedRootSpanId}
+      onUnfocusSpan={opts.onUnfocusSpan}
+      traceDuration={trace.duration}
     />
   );
 }

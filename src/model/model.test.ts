@@ -48,12 +48,63 @@ describe('transformTraceData', () => {
     expect(byId.c1.depth).toBe(1);
     expect(byId.r.hasChildren).toBe(true);
     expect(byId.r.childSpanCount).toBe(2);
+    expect(byId.r.descendantSpanCount).toBe(2); // 扁平树：两者相等（正是它容易被混为一谈的原因）
     // 按结束时间降序：c2(190) 在 c1(160) 前
     expect(byId.r.childSpanIds).toEqual(['c2', 'c1']);
     expect(byId.c1.relativeStartTime).toBe(10);
     expect(t.startTime).toBe(100);
     expect(t.endTime).toBe(200); // root r 在 100+100=200 结束
     expect(t.duration).toBe(100);
+  });
+
+  // Story 9.3i：`childSpanCount`（直接子节点）与 `descendantSpanCount`（子孙总数）是**两个量**。
+  // 真页 waterfall 行首徽标用的是后者——实测 `6a505e15…`（21 span）：
+  //   root                        → 20（= 21 − 1）
+  //   TraceScenarioController…    → 16，而其直接子节点只有 8 个
+  //   GET /order/complex          → 2（flux 那行 + 它的 1 个子孙）
+  // 下面这棵树按同一形状缩小：链式深度让两者必然分岔，扁平树则会掩盖 bug。
+  it('descendantSpanCount = 子孙总数，与 childSpanCount（直接子节点）分岔', () => {
+    //  r ── a ── b ── c
+    //   └── d
+    const chain = (id: string, parent: string, startTime: number) =>
+      mkSpan({
+        spanID: id,
+        operationName: id,
+        startTime,
+        duration: 10,
+        references: [{ refType: 'CHILD_OF' as const, spanID: parent, traceID: TID }],
+      });
+    const t = transformTraceData(
+      resp([
+        mkSpan({ spanID: 'r', operationName: 'root', startTime: 100, duration: 100 }),
+        chain('a', 'r', 110),
+        chain('b', 'a', 120),
+        chain('c', 'b', 130),
+        chain('d', 'r', 140),
+      ])
+    )!;
+    const byId = Object.fromEntries(t.spans.map((s) => [s.spanID, s]));
+
+    // 直接子节点
+    expect(byId.r.childSpanCount).toBe(2); // a, d
+    expect(byId.a.childSpanCount).toBe(1); // b
+    expect(byId.b.childSpanCount).toBe(1); // c
+    expect(byId.c.childSpanCount).toBe(0);
+    expect(byId.d.childSpanCount).toBe(0);
+
+    // 子孙总数（= subtree size − 1）
+    expect(byId.r.descendantSpanCount).toBe(4); // a, b, c, d
+    expect(byId.a.descendantSpanCount).toBe(2); // b, c
+    expect(byId.b.descendantSpanCount).toBe(1); // c
+    expect(byId.c.descendantSpanCount).toBe(0);
+    expect(byId.d.descendantSpanCount).toBe(0);
+
+    // 关键：根与 a 上两者不等；叶子上相等（=0）。
+    expect(byId.r.descendantSpanCount).toBeGreaterThan(byId.r.childSpanCount);
+    expect(byId.a.descendantSpanCount).toBeGreaterThan(byId.a.childSpanCount);
+
+    // 全树恒等式：Σ descendantSpanCount 不等于 span 数；但根的 descendantSpanCount = 总 span 数 − 1。
+    expect(byId.r.descendantSpanCount).toBe(t.spans.length - 1);
   });
 
   it('多个顶层 span 挂在虚拟 root 下（depth 0）', () => {

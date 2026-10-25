@@ -3,14 +3,20 @@ import { css } from '@emotion/css';
 
 import type { RenderableRow } from '../core';
 import { useStyles2, type Theme } from '../theme';
-import { formatDuration } from '../utils';
+import { formatSpanDuration } from '../utils';
+
+import { AXIS_LEFT_INSET, AXIS_RIGHT_GUTTER } from './layout';
+import { ui } from './uiTokens';
 
 const getStyles = (theme: Theme) => ({
+  // Story 9.3（D10）+ 复审（D11）：投影容器左缩 AXIS_LEFT_INSET、右缩 AXIS_RIGHT_GUTTER，与表头刻度轴逐像素同宽。
+  // 时长文案溢出进右侧预留区，故永不越出时间轴列（真页 bar 容器 612..1408 < 单元格 604..1470 亦如此）。
   container: css({
     label: 'DdSpanBarContainer',
     position: 'relative',
     height: '100%',
-    width: '100%',
+    marginLeft: AXIS_LEFT_INSET,
+    marginRight: AXIS_RIGHT_GUTTER,
   }),
   bar: css({
     label: 'DdSpanBar',
@@ -27,13 +33,14 @@ const getStyles = (theme: Theme) => ({
     position: 'absolute',
     top: '50%',
     transform: 'translateY(-50%)',
-    fontFamily: theme.trace.fontFamily,
+    fontFamily: ui.fontSans,
     fontSize: 11,
-    color: theme.colors.text.secondary,
+    color: ui.textSecondary,
     whiteSpace: 'nowrap',
     pointerEvents: 'none',
   }),
   // 关键路径区段（Story 4.3）——条底部高对比描边带，叠在 bar 上。
+  // Story 9.1 文档化例外：叠在任意服务色瀑布条上的纯黑/白最大对比标记，非语义主题色，datafox 无对应 token；保留原值。
   cp: css({
     label: 'DdSpanBarCriticalPath',
     position: 'absolute',
@@ -55,8 +62,8 @@ export function DdSpanBar({ row, color }: Props) {
   const leftPct = Math.max(0, Math.min(100, start * 100));
   const rightPct = Math.max(0, Math.min(100, end * 100));
   const widthPct = Math.max(0, rightPct - leftPct);
-  // 时长标签贴条右侧；条若靠右则改贴左侧，避免溢出。
-  const labelOnLeft = rightPct > 88;
+  // Story 9.3（D10）：时长恒贴条右侧。原 `labelOnLeft`（rightPct>88 翻到条左）已删除——
+  // 它会让根 span（leftPct=0）的时长溢出到标签列。现由容器右侧的 AXIS_RIGHT_GUTTER 承接溢出。
 
   // 关键路径区段：把绝对时间戳投影回 view 分数（与 span 同一映射）。
   const { span } = row;
@@ -78,11 +85,8 @@ export function DdSpanBar({ row, color }: Props) {
       {cpSegments.map((s, i) => (
         <div key={i} className={styles.cp} style={{ left: `${s.left}%`, width: `${s.width}%` }} data-testid="cp-seg" />
       ))}
-      <span
-        className={styles.label}
-        style={labelOnLeft ? { right: `${100 - leftPct}%`, marginRight: 6 } : { left: `${rightPct}%`, marginLeft: 6 }}
-      >
-        {formatDuration(row.span.duration)}
+      <span className={styles.label} style={{ left: `${rightPct}%`, marginLeft: 6 }}>
+        {formatSpanDuration(row.span.duration)}
       </span>
     </div>
   );

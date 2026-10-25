@@ -1,4 +1,4 @@
-import merge from 'lodash/merge';
+import merge from 'lodash/merge.js';
 import tinycolor from 'tinycolor2';
 
 import { druidsTokens } from './tokens/druids';

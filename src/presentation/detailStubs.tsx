@@ -1,11 +1,14 @@
 // 深耦合功能 stub（Story 5.4；FR-18/FR-19；AD-11）——只渲染 UI 外壳，逻辑走可注入回调。
 // 火焰图/Profiles/分享/span-links 因缺外部依赖（@grafana/flamegraph、pyroscope）由宿主接管。
+// Story 9.3e：图标改用 datafox DRUIDS 图标（原为 `../ui` 的 lucide 包装）。
+// ⚠️ DRUIDS 全量 441 个字形里**没有 share**（组件名/kebab 名双向搜过，含子串亦无），
+// 故分享按钮取语义最近的 ExportIcon。若后续 datafox 补 share 字形，此处应换回。
+import { ExportIcon, LinkIcon } from '@datafox/ui';
 import { css } from '@emotion/css';
 import type { ReactNode } from 'react';
 
 import type { TraceSpan } from '../model';
 import { useStyles2, type Theme } from '../theme';
-import { Icon } from '../ui';
 
 /** 详情面板深耦合功能的可注入回调（trace 级）。不传 → 按钮隐藏 / 区域占位。 */
 export interface DetailStubs {
@@ -57,7 +60,7 @@ export function DdShareButton({ span, onShareSpan }: { span: TraceSpan; onShareS
       aria-label="分享 span"
       data-testid="DdShareButton"
     >
-      <Icon name="share-alt" size={14} />
+      <ExportIcon size="sm" />
     </button>
   );
 }
@@ -75,7 +78,7 @@ export function DdSpanLinks({ span, onSpanLinks }: { span: TraceSpan; onSpanLink
       aria-label="关联链接"
       data-testid="DdSpanLinks"
     >
-      <Icon name="link" size={14} />
+      <LinkIcon size="sm" />
     </button>
   );
 }

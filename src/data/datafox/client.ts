@@ -1,65 +1,68 @@
-// DataFox 取数助手（Story 5.2；FR-29 / AD-14）——可选层：库本身仍 props 驱动。
-// fetchTrace 从 DataFox `/api/v3/spans/search` 拉单条 trace，响应经 fromDataFox 返回内部 Trace。
-import { fromDataFox, type DataFoxResponse } from '../../model/adapters/fromDataFox';
-import type { Trace } from '../../model';
+import { DataFoxTraceError, parseDataFoxTraceDetail } from '../../model/adapters/datafoxTraceDetail';
 
-/** 最小 fetch 类型（注入用，避免依赖 DOM lib 的全局 fetch 形状）。 */
-export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{
+export type FetchLike = (url: string, init: RequestInit) => Promise<{
   ok: boolean;
   status: number;
   json: () => Promise<unknown>;
 }>;
 
 export interface FetchTraceOptions {
-  /** DataFox 基址（必填），如 `http://datafox.example.com`。 */
   baseUrl: string;
-  /** 时间窗起点（如 `now-1h`）。 */
+  environment?: string;
+  dataset?: 'ingestedSpans';
   from?: string;
-  /** 时间窗终点（如 `now`）。 */
   to?: string;
-  /** 注入 fetch（默认全局 fetch）；便于测试/SSR。 */
   fetch?: FetchLike;
-  /** 额外请求头（如鉴权）。 */
   headers?: Record<string, string>;
-  /** 单页条数上限（默认 1000）。 */
+  signal?: AbortSignal;
+  /** @deprecated The detail endpoint owns truncation; specifying limit is rejected. */
   limit?: number;
 }
 
-const SEARCH_PATH = '/api/v3/spans/search';
-
-/**
- * 拉取单条 trace：POST `{baseUrl}/api/v3/spans/search`，body `filter.query="trace_id:<id>"`，
- * 响应经 fromDataFox → Trace。`<TraceTimeline>` 仍 props 驱动（本助手可选）。
- */
-export async function fetchTrace(traceId: string, opts: FetchTraceOptions): Promise<Trace | null> {
-  if (!traceId) {
-    throw new Error('fetchTrace: traceId 必填');
+export function createDataFoxTraceUrl(traceId: string, options: FetchTraceOptions): string {
+  if (typeof traceId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(traceId)) throw new DataFoxTraceError('traceId', 'invalid identifier');
+  if (!options?.baseUrl) throw new DataFoxTraceError('baseUrl', 'required');
+  let url: URL;
+  try { url = new URL(options.baseUrl); } catch { throw new DataFoxTraceError('baseUrl', 'expected HTTP(S) URL'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new DataFoxTraceError('baseUrl', 'expected HTTP(S) origin and optional path');
+  url.pathname = `${url.pathname.replace(/\/$/, '')}/api/v3/traces/${encodeURIComponent(traceId)}`;
+  const environment = options.environment ?? 'test';
+  if (typeof environment !== 'string' || !environment || environment.trim() !== environment || environment === '*' || /[\u0000-\u001f\u007f]/.test(environment)) throw new DataFoxTraceError('environment', 'expected specific environment');
+  if (options.dataset !== undefined && options.dataset !== 'ingestedSpans') throw new DataFoxTraceError('dataset', 'expected ingestedSpans');
+  if (options.limit !== undefined) throw new DataFoxTraceError('limit', 'detail endpoint uses isTruncated, not a client page limit');
+  url.searchParams.set('env', environment);
+  url.searchParams.set('dataset', 'ingestedSpans');
+  const from = options.from ?? 'now-24h';
+  const to = options.to ?? 'now';
+  for (const [name, value] of [['from', from], ['to', to]]) {
+    if (typeof value !== 'string' || !(/^now(?:[-+]\d+[smhdw])?$/.test(value) || /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)))) throw new DataFoxTraceError(`filter[${name}]`, 'expected relative or ISO time');
+    url.searchParams.set(`filter[${name}]`, value);
   }
-  if (!opts || !opts.baseUrl) {
-    throw new Error('fetchTrace: opts.baseUrl 必填');
-  }
-  const doFetch: FetchLike = opts.fetch ?? (globalThis.fetch as unknown as FetchLike);
-  if (!doFetch) {
-    throw new Error('fetchTrace: 无可用 fetch（请注入 opts.fetch）');
-  }
+  if (!from.startsWith('now') && !to.startsWith('now') && Date.parse(from) >= Date.parse(to)) throw new DataFoxTraceError('filter[from/to]', 'start must precede end');
+  return url.href;
+}
 
-  const url = `${opts.baseUrl.replace(/\/$/, '')}${SEARCH_PATH}`;
-  const body = {
-    filter: { query: `trace_id:${traceId}` },
-    from: opts.from ?? 'now-1h',
-    to: opts.to ?? 'now',
-    limit: opts.limit ?? 1000,
-  };
-
-  const res = await doFetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    throw new Error(`fetchTrace: DataFox 返回 ${res.status}`);
+/** GET detail including truncation, events and entity metadata. */
+export async function fetchTraceDetail(traceId: string, options: FetchTraceOptions) {
+  const url = createDataFoxTraceUrl(traceId, options);
+  options.signal?.throwIfAborted();
+  const doFetch = options.fetch ?? globalThis.fetch;
+  let response: Awaited<ReturnType<FetchLike>>;
+  try {
+    response = await doFetch(url, { method: 'GET', headers: { Accept: 'application/json', ...options.headers }, signal: options.signal,
+      credentials: 'omit', redirect: 'error', cache: 'no-store' });
+  } catch {
+    options.signal?.throwIfAborted();
+    throw new DataFoxTraceError('network', 'request failed');
   }
-  const json = (await res.json()) as DataFoxResponse;
-  return fromDataFox(json);
+  if (!response.ok) throw new DataFoxTraceError('HTTP', `request failed (${response.status})`);
+  let payload: unknown;
+  try { payload = await response.json(); } catch { throw new DataFoxTraceError('response', 'expected JSON'); }
+  options.signal?.throwIfAborted();
+  return parseDataFoxTraceDetail(payload, traceId);
+}
+
+/** Compatibility convenience: callers needing completeness metadata use fetchTraceDetail. */
+export async function fetchTrace(traceId: string, options: FetchTraceOptions) {
+  return (await fetchTraceDetail(traceId, options)).trace;
 }

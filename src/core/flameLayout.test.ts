@@ -5,13 +5,21 @@ import { mockTrace } from '../model';
 import { computeFlameLayout } from './flameLayout';
 
 describe('computeFlameLayout', () => {
-  it('每个 span 出一行，depth 与 span.depth 一致', () => {
-    const { rows, maxDepth } = computeFlameLayout(mockTrace);
-    expect(rows.length).toBe(mockTrace.spans.length);
-    rows.forEach((row, i) => {
-      expect(row.depth).toBe(mockTrace.spans[i].depth);
-    });
-    expect(maxDepth).toBe(Math.max(...mockTrace.spans.map((s) => s.depth)));
+  it('keeps every span visible with children below parents', () => {
+    const { rows } = computeFlameLayout(mockTrace);
+    expect(rows).toHaveLength(mockTrace.spans.length);
+    const byId = new Map(rows.map(row => [row.spanID, row]));
+    for (const span of mockTrace.spans) {
+      for (const child of span.childSpanIds) {
+        expect(byId.get(child)!.depth).toBeGreaterThan(byId.get(span.spanID)!.depth);
+      }
+    }
+    for (const [index, row] of rows.entries()) {
+      for (const other of rows.slice(index + 1)) {
+        if (row.depth !== other.depth) continue;
+        expect(row.left + row.width <= other.left + 1e-9 || other.left + other.width <= row.left + 1e-9).toBe(true);
+      }
+    }
   });
 
   it('全视图：width ≈ duration/trace.duration，root left≈0', () => {
@@ -47,16 +55,21 @@ describe('computeFlameLayout', () => {
     expect(a).toBe(b);
   });
 
-  it('同深度并发兄弟时间重叠 → 严格 depth 共行（不 lane-pack，对齐 Datadog depth 模型）', () => {
-    // mockTrace 中 s2[20–48.2ms] 与 s7[40–58.5ms] 同为 s1 的子（depth 1）、时间重叠 ~8.2ms。
+  it('separates concurrent siblings without changing time positions', () => {
     const { rows } = computeFlameLayout(mockTrace);
-    const s2 = rows.find((r) => r.spanID === 's2')!;
-    const s7 = rows.find((r) => r.spanID === 's7')!;
-    expect(s2.depth).toBe(1);
-    expect(s7.depth).toBe(1); // 同行
-    // 时间区间重叠（s7 起点 < s2 终点）→ 严格 depth 下视觉重叠（Datadog 不下推泳道）
+    const s2 = rows.find(row => row.spanID === 's2')!;
+    const s7 = rows.find(row => row.spanID === 's7')!;
+    expect(s7.depth).toBeGreaterThan(s2.depth);
     expect(s7.left).toBeLessThan(s2.left + s2.width);
-    expect(s7.left).toBeGreaterThan(s2.left);
+    expect(rows.find(row => row.spanID === 's8')!.depth).toBeGreaterThan(s7.depth);
+  });
+
+  it('separates overlapping missing-parent roots, including out-of-order start times', () => {
+    const a = { ...mockTrace.spans[0], spanID: 'a', depth: 0, startTime: 50, duration: 40, childSpanIds: [] };
+    const b = { ...a, spanID: 'b', startTime: 20 };
+    const { rows } = computeFlameLayout({ ...mockTrace, spans: [a, b], startTime: 0, duration: 100 });
+    expect(rows[0].depth).not.toBe(rows[1].depth);
+    expect(rows[1].left).toBe(0.2);
   });
 
   it('退化区间（trace.duration=0）不产 NaN（M1 修复）', () => {

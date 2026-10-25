@@ -32,6 +32,14 @@ export interface RenderableRow {
   depth: number;
   /** 根→父有序，不含自身；不变量 `length === depth`（FR-25 缩进竖线逐层对齐）。 */
   ancestorSpanIds: string[];
+  /**
+   * 相邻**可见** span 行（Story 9.4d）。列表两端、或邻行是 detail 行时为 `undefined`。
+   *
+   * 供 `span-separator` 判断服务连段：真页按**可见行序**算（折叠会改变连段），而非静态树，
+   * 故此处必须由引擎给出——presentation 拿不到折叠后的行序。仍守 AD-2「无颜色」：给的是 model 数据。
+   */
+  prevSpan?: TraceSpan;
+  nextSpan?: TraceSpan;
   viewBounds: ViewBounds;
   isCollapsed: boolean;
   isMatchingFilter: boolean;

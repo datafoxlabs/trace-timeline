@@ -20,7 +20,11 @@ export interface TraceThemeTokens {
     warn: StatusColor;
     error: StatusColor;
   };
-  /** 服务色缩进竖线 */
+  /**
+   * 缩进竖线。
+   * @deprecated Story 9.3d 起 `DdIndentGuides` 不再消费本 token —— 真页树线是 1px `--ui-border` 灰导线
+   * （见 `9-3d-tree-guides-alignment.md`）。字段保留仅为不破坏 `Theme` 公开类型。
+   */
   indentLine: { width: number; colorFrom: 'service' };
   /** 选中行底色 */
   selectedRowBg: string;

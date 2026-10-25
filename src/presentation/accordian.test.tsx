@@ -15,8 +15,8 @@ function mount(props: Parameters<typeof DdAccordian>[0]) {
 describe('DdAccordian', () => {
   it('点 header 触发 onToggle', () => {
     const onToggle = vi.fn();
-    const { getByTestId } = mount({ label: 'Tags', isOpen: false, onToggle, children: <span>X</span> });
-    fireEvent.click(getByTestId('DdAccordian--header'));
+    const { getByRole } = mount({ label: 'Tags', isOpen: false, onToggle, children: <span>X</span> });
+    fireEvent.click(getByRole('button'));
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
@@ -36,19 +36,19 @@ describe('DdAccordian', () => {
     expect(queryByText('BODY')).not.toBeNull();
   });
 
-  it('count 徽标渲染；header role=switch + aria-checked 反映 isOpen', () => {
-    const { getByTestId, getByText } = mount({ label: 'Tags', count: 3, isOpen: true, onToggle: () => {}, children: <i /> });
+  it('count 徽标渲染；header role=button + aria-expanded 反映 isOpen', () => {
+    const { getByRole, getByText } = mount({ label: 'Tags', count: 3, isOpen: true, onToggle: () => {}, children: <i /> });
     expect(getByText('3')).not.toBeNull();
-    const header = getByTestId('DdAccordian--header');
-    expect(header.getAttribute('role')).toBe('switch');
-    expect(header.getAttribute('aria-checked')).toBe('true');
+    const header = getByRole('button');
+    expect(header.getAttribute('role')).toBe('button');
+    expect(header.getAttribute('aria-expanded')).toBe('true');
   });
 
   it('Enter/Space 键触发 onToggle', () => {
     const onToggle = vi.fn();
-    const { getByTestId } = mount({ label: 'Tags', isOpen: false, onToggle, children: <i /> });
-    fireEvent.keyDown(getByTestId('DdAccordian--header'), { key: 'Enter' });
-    fireEvent.keyDown(getByTestId('DdAccordian--header'), { key: ' ' });
+    const { getByRole } = mount({ label: 'Tags', isOpen: false, onToggle, children: <i /> });
+    fireEvent.keyDown(getByRole('button'), { key: 'Enter' });
+    fireEvent.keyDown(getByRole('button'), { key: ' ' });
     expect(onToggle).toHaveBeenCalledTimes(2);
   });
 });

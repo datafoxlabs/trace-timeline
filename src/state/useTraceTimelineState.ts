@@ -1,10 +1,12 @@
 // 状态容器（AD-5）——组合移植的 children/viewRange/hover hook + 列宽 + focusedSpanId，
 // 提供「非受控默认 / 逐字段受控 / 全量受控逃生舱」三态，互斥并 dev 警告。
 // detailStates/search 为槽（Epic 3/4 接入）。
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Trace, TraceSpan, TraceLog, TraceSpanReference } from '../model';
 import type { ViewRange, ViewRangeTimeUpdate } from '../core';
+
+import spanAncestorIds from '../model/span-ancestor-ids';
 
 import DetailState from './DetailState';
 import { useChildrenState } from './useChildrenState';
@@ -27,6 +29,10 @@ export interface ControlledTraceState {
 }
 
 export interface UseTraceTimelineStateOptions {
+  searchSpans?: TraceSpan[];
+  /** undefined keeps local selection; null is controlled deselection. */
+  selectedSpanId?: string | null;
+  onSelectedSpanIdChange?: (id: string | null) => void;
   // —— 逐字段受控（传值+回调=受控；传值无回调=只读冻结+warn；未传=非受控）——
   focusedSpanId?: string;
   onFocusedSpanIdChange?: (id: string | undefined) => void;
@@ -64,8 +70,9 @@ export interface TraceTimelineState {
   detailToggles: DetailToggles;
   /** 当前选中 span（底部详情抽屉，Story 5.5）。 */
   selectedSpanId: string | undefined;
-  /** 点 span 选中/取消选中（toggle）。 */
+  /** Select a span; repeated selection keeps its detail open. */
   selectSpan: (spanID: string) => void;
+  clearSelection: () => void;
 
   // —— 搜索（Story 4.1；本地视图态，受控/非受控一致）——
   search: SearchState;
@@ -103,22 +110,24 @@ export function useTraceTimelineState(
   const viewRangeHook = useViewRange();
   const hover = useHoverIndentGuide();
   const detail = useDetailState(trace);
-  const search = useSearch(trace);
-  const [selectedSpanId, setSelectedSpanId] = useState<string | undefined>(undefined);
-
-  // 点 span：toggle 单选；选中时确保该 span 有 DetailState（供抽屉子分组折叠）。Story 5.5。
-  const selectSpan = useCallback(
-    (spanID: string) => {
-      setSelectedSpanId((cur) => {
-        const next = cur === spanID ? undefined : spanID;
-        if (next) {
-          detail.ensureDetail(next);
-        }
-        return next;
-      });
-    },
-    [detail]
-  );
+  const [selectedUC, setSelectedUC] = useState<string | undefined>(undefined);
+  const selectionControlled = options.selectedSpanId !== undefined;
+  const selectedSpanId = selectionControlled ? options.selectedSpanId ?? undefined : selectedUC;
+  const ensureDetail = detail.ensureDetail;
+  useEffect(() => {
+    if (selectedSpanId && trace?.spans.some((span) => span.spanID === selectedSpanId)) ensureDetail(selectedSpanId);
+  }, [selectedSpanId, trace, ensureDetail]);
+  const onSelectedSpanIdChange = options.onSelectedSpanIdChange;
+  const selectSpan = useCallback((spanID: string) => {
+    if (selectedSpanId === spanID) return;
+    if (!selectionControlled) setSelectedUC(spanID);
+    onSelectedSpanIdChange?.(spanID);
+  }, [selectedSpanId, selectionControlled, onSelectedSpanIdChange]);
+  const clearSelection = useCallback(() => {
+    if (!selectionControlled) setSelectedUC(undefined);
+    onSelectedSpanIdChange?.(null);
+  }, [selectionControlled, onSelectedSpanIdChange]);
+  const search = useSearch(trace, { selectedSpanId, onNavigate: selectSpan, spans: options.searchSpans });
   const [columnWidthUC, setColumnWidthUC] = useState(options.initialColumnWidth ?? DEFAULT_COLUMN_WIDTH);
   const [focusedUC, setFocusedUC] = useState<string | undefined>(undefined);
 
@@ -149,6 +158,33 @@ export function useTraceTimelineState(
     : focusedControlled
       ? options.focusedSpanId
       : focusedUC;
+
+  const previousReveal = useRef<{ trace: typeof trace; targets: (string | undefined)[] }>({ trace: undefined, targets: [] });
+  const expandAncestors = children.expandAncestors;
+  const focusedMatchId = search.focusedMatchId;
+  const previousMatches = useRef(search.matches);
+  const matches = search.matches;
+  useEffect(() => {
+    const targets = [selectedSpanId, focusedSpanId, focusedMatchId];
+    const previous = previousReveal.current;
+    previousReveal.current = { trace, targets };
+    const matchesChanged = matches !== previousMatches.current;
+    previousMatches.current = matches;
+    // Reveal matching branches once on commit; later manual collapse remains authoritative.
+    const changed = targets.filter((id, index) => id && (trace !== previous.trace || id !== previous.targets[index]));
+    if (matchesChanged && matches) changed.push(...matches);
+    if (!trace || !changed.length) return;
+    const ancestorIds = changed.flatMap((id) => spanAncestorIds(trace.spans.find((span) => span.spanID === id)));
+    if (!isFullyControlled) {
+      expandAncestors(ancestorIds);
+      return;
+    }
+    const hidden = options.state!.childrenHiddenIDs;
+    if (!ancestorIds.some((id) => hidden.has(id))) return;
+    const next = new Set(hidden);
+    ancestorIds.forEach((id) => next.delete(id));
+    emitState({ childrenHiddenIDs: next });
+  }, [trace, selectedSpanId, focusedSpanId, focusedMatchId, matches, isFullyControlled, options.state, emitState, expandAncestors]);
 
   const setFocusedSpanId = useCallback(
     (id: string | undefined) => {
@@ -256,6 +292,7 @@ export function useTraceTimelineState(
         detailToggles: detailTogglesUC,
         selectedSpanId,
         selectSpan,
+        clearSelection,
         search,
       };
     }
@@ -282,6 +319,7 @@ export function useTraceTimelineState(
       detailToggles: detailTogglesUC,
       selectedSpanId,
       selectSpan,
+      clearSelection,
       search,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -302,6 +340,7 @@ export function useTraceTimelineState(
     detailTogglesUC,
     selectedSpanId,
     selectSpan,
+    clearSelection,
   ]);
 }
 

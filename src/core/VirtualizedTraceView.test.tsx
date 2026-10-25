@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
-import { createElement } from 'react';
-import { describe, expect, it } from 'vitest';
+import { createElement, createRef } from 'react';
+import { describe, expect, it, vi } from 'vitest';
 
 import { mockTrace, transformTraceData } from '../model';
 import type { Trace, TraceResponse, TraceSpanData } from '../model';
@@ -34,8 +34,9 @@ function renderEngine(trace: Trace, override: Partial<VirtualizedTraceViewProps>
     removeHoverIndentGuideId: noop,
     ...override,
   };
-  const result = render(createElement(VirtualizedTraceView, props));
-  return { rows, result };
+  const ref = createRef<VirtualizedTraceView>();
+  const result = render(createElement(VirtualizedTraceView, { ...props, ref }));
+  return { rows, result, props, ref };
 }
 
 describe('VirtualizedTraceView — rowRenderer 契约', () => {
@@ -96,6 +97,34 @@ describe('VirtualizedTraceView — rowRenderer 契约', () => {
     expect(rows.get('s4-false')!.descendantHasError).toBe(true);
   });
 
+  // Story 9.4d：span-separator 的服务连段按**可见行序**算（真页折叠实测），故引擎须给出邻行。
+  it('prevSpan / nextSpan 取可见行序的相邻 span，两端为 undefined', () => {
+    const { rows } = renderEngine(mockTrace);
+    // 可见序：s1 s2 s3 s7 s8 s9 s4 s5 s6
+    expect(rows.get('s1-false')!.prevSpan).toBeUndefined();
+    expect(rows.get('s1-false')!.nextSpan!.spanID).toBe('s2');
+    expect(rows.get('s3-false')!.prevSpan!.spanID).toBe('s2');
+    expect(rows.get('s3-false')!.nextSpan!.spanID).toBe('s7');
+    expect(rows.get('s6-false')!.prevSpan!.spanID).toBe('s5');
+    expect(rows.get('s6-false')!.nextSpan).toBeUndefined();
+  });
+
+  it('折叠改变邻行：s4 折叠后 nextSpan 不再是被藏起来的 s5', () => {
+    const { rows } = renderEngine(mockTrace, { childrenHiddenIDs: new Set(['s4']) });
+    // s4 是可见序末行（s5/s6 已折叠掉）→ 下端无邻行，竖脊在此收口
+    expect(rows.get('s4-false')!.nextSpan).toBeUndefined();
+    expect(rows.get('s4-false')!.prevSpan!.spanID).toBe('s9');
+  });
+
+  it('detail 行截断邻行：展开 s2 的详情后，s2 与 s3 互不相邻', () => {
+    const { rows } = renderEngine(mockTrace, { detailStates: new Map([['s2', {}]]) });
+    // 可见序：s1 s2(bar) s2(detail) s3 …
+    expect(rows.get('s2-false')!.nextSpan).toBeUndefined();
+    expect(rows.get('s3-false')!.prevSpan).toBeUndefined();
+    // detail 行自身不消费邻行，但契约上仍取可见序
+    expect(rows.get('s2-true')!.prevSpan!.spanID).toBe('s2');
+  });
+
   it('1000 span trace 虚拟化：渲染行数 ≪ 总数（jsdom 走 initialDraw 上限 100）', () => {
     const big = makeBigTrace(1000);
     expect(big.spans).toHaveLength(1000);
@@ -145,3 +174,18 @@ function makeBigTrace(n: number): Trace {
   };
   return transformTraceData(resp)!;
 }
+
+
+describe('navigation scroll lifecycle', () => {
+  it('retries hidden targets after expansion, then leaves manual scrolling alone', () => {
+    const { result, props, ref } = renderEngine(mockTrace, { focusedSpanId: 's9', childrenHiddenIDs: new Set(['s7']) });
+    expect(ref.current!.pendingScrollSpanId).toBe('s9');
+    const scroll = vi.spyOn(ref.current!.listView!, 'scrollToIndex');
+    const expanded = { ...props, ref, childrenHiddenIDs: new Set<string>() };
+    result.rerender(createElement(VirtualizedTraceView, expanded));
+    expect(scroll).toHaveBeenCalledOnce();
+    result.rerender(createElement(VirtualizedTraceView, { ...expanded, hoverIndentGuideIds: new Set(['s1']) }));
+    expect(scroll).toHaveBeenCalledOnce();
+    scroll.mockRestore();
+  });
+});
